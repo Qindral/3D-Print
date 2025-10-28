@@ -51,7 +51,10 @@ class Rod:
         }
 
     def has_free_end(self, end: str) -> bool:
-        return end not in self.connections and not self.connections
+        return end not in self.connections
+
+    def is_connected_to(self, other_id: int) -> bool:
+        return any(conn.other_id == other_id for conn in self.connections.values())
 
     def apply_translation(self, delta: np.ndarray) -> None:
         self.center += delta
@@ -142,6 +145,8 @@ def attempt_connections(rods: List[Rod]) -> None:
                 continue
             # Enforce that only complementary ends (A-B) can connect.
             if end_i == end_j:
+                continue
+            if rods[rod_i].is_connected_to(rod_j):
                 continue
             if distance(pos_i, pos_j) <= CONNECTION_DISTANCE:
                 rods[rod_i].connections[end_i] = Connection(rod_j, end_j)
