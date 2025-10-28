@@ -7,12 +7,13 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pygame
 from matplotlib.widgets import Button, TextBox
+from scipy import ndimage
 
 
 # Simulation constants
@@ -471,14 +472,14 @@ class RollingBallResult:
     filled_voxel_count: int
     total_voxel_count: int
     fill_fraction: float
-    radius: float
+    threshold: float
     voxel_size: float
 
 
 @dataclass
 class HeadlessUIState:
     abort_requested: bool = False
-    rolling_radius: float = 12.0
+    distance_threshold: float = 1.5
     rolling_result: Optional[RollingBallResult] = None
     launch_rolling_viewer: bool = False
     latest_snapshot: Optional[SimulationSnapshot] = None
@@ -498,37 +499,6 @@ def sphere_offsets(radius: int) -> List[Tuple[int, int, int]]:
     if not offsets:
         offsets.append((0, 0, 0))
     return offsets
-
-
-def binary_dilation(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
-    result = np.zeros_like(grid, dtype=bool)
-    coords = np.argwhere(grid)
-    max_x, max_y, max_z = grid.shape
-    for x, y, z in coords:
-        for ox, oy, oz in offsets:
-            nx, ny, nz = x + ox, y + oy, z + oz
-            if 0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z:
-                result[nx, ny, nz] = True
-    return result
-
-
-def binary_erosion(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
-    result = np.zeros_like(grid, dtype=bool)
-    max_x, max_y, max_z = grid.shape
-    coords = np.argwhere(grid)
-    for x, y, z in coords:
-        keep = True
-        for ox, oy, oz in offsets:
-            nx, ny, nz = x + ox, y + oy, z + oz
-            if not (0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z):
-                keep = False
-                break
-            if not grid[nx, ny, nz]:
-                keep = False
-                break
-        if keep:
-            result[x, y, z] = True
-    return result
 
 
 def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarray:
@@ -564,21 +534,27 @@ def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarr
 
 def run_rolling_ball_simulation(
     render_data: List[RenderRod],
-    radius: float,
+    threshold: float,
     grid_resolution: int = 72,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> RollingBallResult:
+    def report(progress: float, message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(max(0.0, min(1.0, progress)), message)
+
     grid_shape = (grid_resolution, grid_resolution, grid_resolution)
     occupancy = np.zeros(grid_shape, dtype=bool)
     voxel_size = CUBE_SIZE / grid_resolution
     half = CUBE_HALF
 
     if not render_data:
+        report(1.0, "Keine Rod-Daten vorhanden")
         return RollingBallResult(
             surface_points=np.empty((0, 3), dtype=float),
             filled_voxel_count=0,
             total_voxel_count=int(np.prod(grid_shape)),
             fill_fraction=0.0,
-            radius=radius,
+            threshold=max(threshold, 0.0),
             voxel_size=voxel_size,
         )
 
@@ -586,7 +562,10 @@ def run_rolling_ball_simulation(
     thickness_radius = max(0, int(math.ceil((BASE_ROD_THICKNESS * 0.5) / max(voxel_size, 1e-6))))
     thickness_offsets = sphere_offsets(thickness_radius)
 
-    for point_a, point_b, _ in render_data:
+    report(0.0, "Voxelisiere Rods")
+    total_rods = len(render_data)
+    next_progress_update = 0.05
+    for index, (point_a, point_b, _) in enumerate(render_data):
         start = np.array(point_a, dtype=float)
         end = np.array(point_b, dtype=float)
         for t in np.linspace(0.0, 1.0, samples_per_rod):
@@ -597,24 +576,37 @@ def run_rolling_ball_simulation(
                 nx, ny, nz = ix + ox, iy + oy, iz + oz
                 if 0 <= nx < grid_resolution and 0 <= ny < grid_resolution and 0 <= nz < grid_resolution:
                     occupancy[nx, ny, nz] = True
+        if total_rods > 0:
+            progress = 0.6 * ((index + 1) / total_rods)
+            if progress >= next_progress_update:
+                report(progress, f"Voxelisiere Rods ({index + 1}/{total_rods})")
+                next_progress_update += 0.05
 
-    radius_vox = max(1, min(grid_resolution // 2, int(math.ceil(radius / max(voxel_size, 1e-6)))))
-    structuring = sphere_offsets(radius_vox)
+    report(0.62, "Berechne Distanzkarte der Freiräume")
 
-    dilated = binary_dilation(occupancy, structuring)
-    closed = binary_erosion(dilated, structuring)
+    sampling = (voxel_size, voxel_size, voxel_size)
+    empty_distance = ndimage.distance_transform_edt(~occupancy, sampling=sampling)
 
-    filled_voxel_count = int(np.count_nonzero(closed))
-    total_voxel_count = int(closed.size)
+    report(0.8, "Fülle Regionen unterhalb des Schwellenwerts")
+
+    threshold = max(threshold, 0.0)
+    filled = occupancy | ((~occupancy) & (empty_distance <= threshold))
+
+    report(0.92, "Extrahiere Oberfläche")
+
+    filled_voxel_count = int(np.count_nonzero(filled))
+    total_voxel_count = int(filled.size)
     fill_fraction = (filled_voxel_count / total_voxel_count) if total_voxel_count else 0.0
-    surface_points = extract_surface_points(closed, voxel_size)
+    surface_points = extract_surface_points(filled, voxel_size)
+
+    report(1.0, "Distanzfüllung abgeschlossen")
 
     return RollingBallResult(
         surface_points=surface_points,
         filled_voxel_count=filled_voxel_count,
         total_voxel_count=total_voxel_count,
         fill_fraction=fill_fraction,
-        radius=radius,
+        threshold=threshold,
         voxel_size=voxel_size,
     )
 
@@ -624,8 +616,8 @@ def export_rolling_ball_result(
 ) -> Path:
     tmp_path = path.parent / f"{path.name}.tmp"
     with tmp_path.open("w", encoding="utf-8") as handle:
-        handle.write("# Rolling-Ball surface export\n")
-        handle.write(f"# radius={result.radius:.3f}\n")
+        handle.write("# Distance-fill surface export\n")
+        handle.write(f"# threshold={result.threshold:.3f}\n")
         handle.write(f"# voxel_size={result.voxel_size:.3f}\n")
         handle.write(f"# fill_fraction={result.fill_fraction:.6f}\n")
         for point in result.surface_points:
@@ -976,38 +968,52 @@ def run_headless_phase(
         status_text.set_text(f"Status: {message}")
         fig.canvas.draw_idle()
 
-    radius_ax = fig.add_axes([0.1, 0.18, 0.2, 0.05])
-    radius_box = TextBox(radius_ax, "Ball radius", initial=f"{ui_state.rolling_radius:.1f}")
+    threshold_ax = fig.add_axes([0.1, 0.18, 0.2, 0.05])
+    threshold_box = TextBox(
+        threshold_ax,
+        "Schwelle",
+        initial=f"{ui_state.distance_threshold:.1f}",
+    )
 
-    def handle_radius_submit(text: str) -> None:
+    def handle_threshold_submit(text: str) -> None:
         try:
             value = float(text)
-            if value <= 0:
+            if value < 0:
                 raise ValueError
         except ValueError:
-            update_status("Ungültiger Radius – bitte eine positive Zahl eingeben")
-            radius_box.set_val(f"{ui_state.rolling_radius:.1f}")
+            update_status("Ungültige Schwelle – bitte eine nichtnegative Zahl eingeben")
+            threshold_box.set_val(f"{ui_state.distance_threshold:.1f}")
             return
-        ui_state.rolling_radius = value
-        update_status(f"Rolling-Ball-Radius gesetzt auf {value:.2f}")
+        ui_state.distance_threshold = value
+        update_status(f"Schwellenwert gesetzt auf {value:.2f}")
 
-    radius_box.on_submit(handle_radius_submit)
+    threshold_box.on_submit(handle_threshold_submit)
 
     roll_ax = fig.add_axes([0.35, 0.17, 0.25, 0.06])
-    roll_button = Button(roll_ax, "Rolling-Ball ausführen")
+    roll_button = Button(roll_ax, "Distanzfüllung ausführen")
 
     def handle_roll_click(_: object) -> None:
         snapshot = ui_state.latest_snapshot or current_snapshot
         if snapshot is None:
             update_status("Keine Snapshot-Daten verfügbar")
             return
-        update_status("Rolling-Ball-Simulation läuft …")
+        update_status("Fülle basierend auf Distanzkarte …")
+
+        def progress_callback(progress: float, message: str) -> None:
+            update_status(f"{message} – {progress * 100:.0f}%")
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+
         fig.canvas.draw()
-        result = run_rolling_ball_simulation(snapshot.render_data, ui_state.rolling_radius)
+        result = run_rolling_ball_simulation(
+            snapshot.render_data,
+            ui_state.distance_threshold,
+            progress_cb=progress_callback,
+        )
         ui_state.rolling_result = result
         filled_percent = result.fill_fraction * 100.0
         update_status(
-            f"Rolling-Ball fertig – {result.filled_voxel_count} von {result.total_voxel_count} Voxeln ("
+            f"Distanzfüllung fertig – {result.filled_voxel_count} von {result.total_voxel_count} Voxeln ("
             f"{filled_percent:.2f}%)"
         )
 
@@ -1018,23 +1024,23 @@ def run_headless_phase(
 
     def handle_view_click(_: object) -> None:
         if ui_state.rolling_result is None:
-            update_status("Bitte zuerst die Rolling-Ball-Simulation ausführen")
+            update_status("Bitte zuerst die Distanzfüllung ausführen")
             return
         ui_state.launch_rolling_viewer = True
-        update_status("Rolling-Ball-Viewer wird geöffnet")
+        update_status("3D-Ansicht wird geöffnet")
         plt.close(fig)
 
     view_button.on_clicked(handle_view_click)
 
     export_ax = fig.add_axes([0.64, 0.08, 0.26, 0.06])
-    export_button = Button(export_ax, "Rolling-Ball exportieren")
+    export_button = Button(export_ax, "Distanzfüllung exportieren")
 
     def handle_export_click(_: object) -> None:
         if ui_state.rolling_result is None:
-            update_status("Bitte zuerst die Rolling-Ball-Simulation ausführen")
+            update_status("Bitte zuerst die Distanzfüllung ausführen")
             return
         export_path = export_rolling_ball_result(ui_state.rolling_result)
-        update_status(f"Rolling-Ball-Export gespeichert in {export_path}")
+        update_status(f"Export gespeichert in {export_path}")
 
     export_button.on_clicked(handle_export_click)
 
@@ -1216,7 +1222,7 @@ def run_interactive_viewer(
 
 def run_rolling_ball_viewer(result: RollingBallResult) -> None:
     screen = pygame.display.set_mode((960, 720))
-    pygame.display.set_caption("Rolling-Ball-Organik")
+    pygame.display.set_caption("Distanzfüllung-Organik")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
 
@@ -1274,7 +1280,7 @@ def run_rolling_ball_viewer(result: RollingBallResult) -> None:
             camera.position += move_direction * camera.move_speed * speed_multiplier * (dt_ms / 1000.0)
 
         overlay_text = (
-            f"Radius: {result.radius:.2f} | Füllung: {result.fill_fraction * 100.0:5.2f}% | "
+            f"Schwelle: {result.threshold:.2f} | Füllung: {result.fill_fraction * 100.0:5.2f}% | "
             f"Oberflächenpunkte: {len(result.surface_points)}"
         )
 
