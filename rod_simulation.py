@@ -1041,14 +1041,14 @@ def run_headless_phase(
         f"Schwelle {ui_state.distance_threshold:.2f}, Auflösung {ui_state.grid_resolution}³ ({memory_hint})"
     )
 
-    roll_ax = fig.add_axes([0.35, 0.17, 0.25, 0.06])
-    roll_button = Button(roll_ax, "Distanzfüllung ausführen")
-
-    def handle_roll_click(_: object) -> None:
+    def perform_distance_fill() -> bool:
         snapshot = ui_state.latest_snapshot or current_snapshot
         if snapshot is None:
             update_status("Keine Snapshot-Daten verfügbar")
-            return
+            return False
+        if not snapshot.render_data:
+            update_status("Snapshot enthält keine Rod-Geometrie")
+            return False
         update_status(
             "Fülle basierend auf Distanzkarte … "
             f"(Auflösung {ui_state.grid_resolution}³)"
@@ -1073,6 +1073,13 @@ def run_headless_phase(
             f"{result.filled_voxel_count} von {result.total_voxel_count} Voxeln "
             f"({filled_percent:.2f}%) bei {result.grid_resolution}³"
         )
+        return True
+
+    roll_ax = fig.add_axes([0.35, 0.17, 0.25, 0.06])
+    roll_button = Button(roll_ax, "Distanzfüllung ausführen")
+
+    def handle_roll_click(_: object) -> None:
+        perform_distance_fill()
 
     roll_button.on_clicked(handle_roll_click)
 
@@ -1081,8 +1088,9 @@ def run_headless_phase(
 
     def handle_view_click(_: object) -> None:
         if ui_state.rolling_result is None:
-            update_status("Bitte zuerst die Distanzfüllung ausführen")
-            return
+            if not perform_distance_fill():
+                update_status("Distanzfüllung konnte nicht erzeugt werden")
+                return
         ui_state.launch_rolling_viewer = True
         update_status("3D-Ansicht wird geöffnet")
         plt.close(fig)
