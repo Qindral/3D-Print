@@ -10,9 +10,9 @@ import pygame
 
 
 # Simulation constants
-CUBE_SIZE = 200.0
-ROD_LENGTH = 20.0
-NUM_RODS = 500
+CUBE_SIZE = 40.0
+ROD_LENGTH = 10.0
+NUM_RODS = 580
 TIME_STEP = 0.05
 TRANSLATION_SCALE = 2.5
 ROTATION_SCALE = 0.2
@@ -350,7 +350,9 @@ def run_simulation() -> None:
     last_caption_update = 0
 
     running = True
+    s = 0
     while running:
+        s+=1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -362,22 +364,22 @@ def run_simulation() -> None:
                 current_state = state_queue.get_nowait()
         except queue.Empty:
             pass
-
-        draw_rods(
-            screen,
-            current_state,
-            angle_x,
-            angle_y,
-            overlay_text=f"FPS: {clock.get_fps():5.1f}",
-            font=font,
-        )
-        clock.tick(60)
-        now = pygame.time.get_ticks()
-        if now - last_caption_update >= 250:
-            pygame.display.set_caption(
-                f"Rod Brownian Motion Simulation - FPS: {clock.get_fps():5.1f}"
+        if s%1000 ==0:
+            draw_rods(
+                screen,
+                current_state,
+                angle_x,
+                angle_y,
+                overlay_text=f"FPS: {clock.get_fps():5.1f}",
+                font=font,
             )
-            last_caption_update = now
+            clock.tick(60)
+            now = pygame.time.get_ticks()
+            if now - last_caption_update >= 250:
+                pygame.display.set_caption(
+                    f"Rod Brownian Motion Simulation - FPS: {clock.get_fps():5.1f}"
+                )
+                last_caption_update = now
 
     stop_event.set()
     worker.join(timeout=2.0)
