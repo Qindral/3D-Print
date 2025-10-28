@@ -180,45 +180,87 @@ def distance(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
-    endpoints: List[Tuple[int, str, np.ndarray]] = []
+    cell_size = CONNECTION_DISTANCE * 2.0
+    inv_cell = 1.0 / cell_size
+    half = CUBE_SIZE / 2.0
+
+    endpoints: List[Tuple[int, str, Tuple[float, float, float], Tuple[int, int, int]]] = []
+    grid: Dict[Tuple[int, int, int], List[int]] = {}
+
     for idx, rod in enumerate(rods):
-        for end, pos in rod.endpoints().items():
-            endpoints.append((idx, end, pos))
+        rod_endpoints = rod.endpoints()
+        for end, pos in rod_endpoints.items():
+            pos_tuple = (float(pos[0]), float(pos[1]), float(pos[2]))
+            cell = (
+                int((pos_tuple[0] + half) * inv_cell),
+                int((pos_tuple[1] + half) * inv_cell),
+                int((pos_tuple[2] + half) * inv_cell),
+            )
+            entry_index = len(endpoints)
+            endpoints.append((idx, end, pos_tuple, cell))
+            grid.setdefault(cell, []).append(entry_index)
 
-    random.shuffle(endpoints)
-    for i in range(len(endpoints)):
-        rod_i, end_i, pos_i = endpoints[i]
+    order = list(range(len(endpoints)))
+    random.shuffle(order)
+    max_dist_sq = CONNECTION_DISTANCE * CONNECTION_DISTANCE
+
+    for idx_i in order:
+        rod_i, end_i, pos_i, cell_i = endpoints[idx_i]
         group_i = rods[rod_i].connections.get(end_i)
-        for j in range(i + 1, len(endpoints)):
-            rod_j, end_j, pos_j = endpoints[j]
-            if rod_i == rod_j:
-                continue
-            if end_i == end_j:
-                continue
-            group_j = rods[rod_j].connections.get(end_j)
-            if group_i is not None and group_j is not None and group_i == group_j:
-                continue
-            if distance(pos_i, pos_j) > CONNECTION_DISTANCE:
-                continue
 
-            if group_i is None and group_j is None:
-                group_id = manager.create_group((rod_i, end_i), (rod_j, end_j))
-                rods[rod_i].connections[end_i] = group_id
-                rods[rod_j].connections[end_j] = group_id
-                break
-            if group_i is not None and group_j is None:
-                manager.add_member(group_i, (rod_j, end_j))
-                rods[rod_j].connections[end_j] = group_i
-                break
-            if group_i is None and group_j is not None:
-                manager.add_member(group_j, (rod_i, end_i))
-                rods[rod_i].connections[end_i] = group_j
-                break
-            if group_i is not None and group_j is not None and group_i != group_j:
-                target, source = (group_i, group_j)
-                if source < target:
-                    target, source = source, target
-                manager.merge_groups(target, source, rods)
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    neighbor_cell = (
+                        cell_i[0] + dx,
+                        cell_i[1] + dy,
+                        cell_i[2] + dz,
+                    )
+                    candidates = grid.get(neighbor_cell)
+                    if not candidates:
+                        continue
+                    for idx_j in candidates:
+                        if idx_j == idx_i or idx_j < idx_i:
+                            continue
+                        rod_j, end_j, pos_j, _ = endpoints[idx_j]
+                        if rod_i == rod_j or end_i == end_j:
+                            continue
+
+                        group_j = rods[rod_j].connections.get(end_j)
+                        if group_i is not None and group_j is not None and group_i == group_j:
+                            continue
+
+                        dxp = pos_i[0] - pos_j[0]
+                        dyp = pos_i[1] - pos_j[1]
+                        dzp = pos_i[2] - pos_j[2]
+                        dist_sq = dxp * dxp + dyp * dyp + dzp * dzp
+                        if dist_sq > max_dist_sq:
+                            continue
+
+                        if group_i is None and group_j is None:
+                            group_id = manager.create_group((rod_i, end_i), (rod_j, end_j))
+                            rods[rod_i].connections[end_i] = group_id
+                            rods[rod_j].connections[end_j] = group_id
+                            break
+                        if group_i is not None and group_j is None:
+                            manager.add_member(group_i, (rod_j, end_j))
+                            rods[rod_j].connections[end_j] = group_i
+                            break
+                        if group_i is None and group_j is not None:
+                            manager.add_member(group_j, (rod_i, end_i))
+                            rods[rod_i].connections[end_i] = group_j
+                            break
+                        if group_i is not None and group_j is not None and group_i != group_j:
+                            target, source = (group_i, group_j)
+                            if source < target:
+                                target, source = source, target
+                            manager.merge_groups(target, source, rods)
+                            break
+                    else:
+                        continue
+                    break
+                else:
+                    continue
                 break
 
 
@@ -348,34 +390,50 @@ def run_simulation() -> None:
     angle_x = math.radians(35)
     angle_y = math.radians(45)
     last_caption_update = 0
+    update_fps_display = 0.0
+    last_update_tick: int | None = None
 
     running = True
     while running:
+        dt_ms = clock.tick(60)
+        render_fps = 1000.0 / dt_ms if dt_ms > 0 else 0.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+        received_update = False
         try:
             while True:
                 current_state = state_queue.get_nowait()
+                received_update = True
         except queue.Empty:
             pass
+
+        if received_update:
+            now = pygame.time.get_ticks()
+            if last_update_tick is not None:
+                delta = now - last_update_tick
+                if delta > 0:
+                    update_fps_display = 1000.0 / delta
+            last_update_tick = now
 
         draw_rods(
             screen,
             current_state,
             angle_x,
             angle_y,
-            overlay_text=f"FPS: {clock.get_fps():5.1f}",
+            overlay_text=(
+                f"Render FPS: {render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f}"
+            ),
             font=font,
         )
-        clock.tick(60)
         now = pygame.time.get_ticks()
         if now - last_caption_update >= 250:
             pygame.display.set_caption(
-                f"Rod Brownian Motion Simulation - FPS: {clock.get_fps():5.1f}"
+                "Rod Brownian Motion Simulation - "
+                f"Render FPS: {render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f}"
             )
             last_caption_update = now
 
