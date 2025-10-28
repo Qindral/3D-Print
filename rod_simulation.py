@@ -1,3 +1,4 @@
+import json
 import math
 import multiprocessing as mp
 import queue
@@ -5,6 +6,7 @@ import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -51,6 +53,9 @@ CUBE_EDGES = [
     (5, 7),
     (6, 7),
 ]
+
+STATE_FILE_PATH = Path("rod_state.json")
+ROLLING_EXPORT_PATH = Path("rolling_ball_surface.obj")
 
 
 def random_unit_vector() -> np.ndarray:
@@ -189,6 +194,9 @@ class ConnectionManager:
                 accumulator += rods[rod_idx].endpoints()[end]
             anchor_map[group_id] = accumulator / len(group.members)
         return anchor_map
+
+    def next_group_id(self) -> int:
+        return self._next_id
 
 
 def create_rods(num_rods: int) -> List[Rod]:
@@ -441,10 +449,20 @@ def thickness_for_depth(depth: float) -> int:
 
 
 @dataclass
+class SimulationStatePayload:
+    centers: List[Tuple[float, float, float]]
+    orientations: List[Tuple[float, float, float]]
+    connections: List[Dict[str, int]]
+    groups: Dict[int, List[Tuple[int, str]]]
+    next_group_id: int
+
+
+@dataclass
 class SimulationSnapshot:
     render_data: List[RenderRod]
     free_end_count: int
     largest_cluster_percent: float
+    state_payload: Optional[SimulationStatePayload] = None
 
 
 @dataclass
@@ -601,6 +619,21 @@ def run_rolling_ball_simulation(
     )
 
 
+def export_rolling_ball_result(
+    result: RollingBallResult, path: Path = ROLLING_EXPORT_PATH
+) -> Path:
+    tmp_path = path.parent / f"{path.name}.tmp"
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        handle.write("# Rolling-Ball surface export\n")
+        handle.write(f"# radius={result.radius:.3f}\n")
+        handle.write(f"# voxel_size={result.voxel_size:.3f}\n")
+        handle.write(f"# fill_fraction={result.fill_fraction:.6f}\n")
+        for point in result.surface_points:
+            handle.write(f"v {point[0]:.6f} {point[1]:.6f} {point[2]:.6f}\n")
+    tmp_path.replace(path)
+    return path
+
+
 def compute_metrics(rods: List[Rod], manager: ConnectionManager) -> Tuple[int, float]:
     free_ends = 0
     adjacency: List[set[int]] = [set() for _ in rods]
@@ -640,7 +673,9 @@ def compute_metrics(rods: List[Rod], manager: ConnectionManager) -> Tuple[int, f
     return free_ends, percent
 
 
-def build_snapshot(rods: List[Rod], manager: ConnectionManager) -> SimulationSnapshot:
+def build_snapshot(
+    rods: List[Rod], manager: ConnectionManager, include_state: bool = False
+) -> SimulationSnapshot:
     render_data: List[RenderRod] = []
     for rod in rods:
         endpoints = rod.endpoints()
@@ -652,10 +687,29 @@ def build_snapshot(rods: List[Rod], manager: ConnectionManager) -> SimulationSna
             )
         )
     free_ends, largest_percent = compute_metrics(rods, manager)
+    state_payload: Optional[SimulationStatePayload] = None
+    if include_state:
+        centers = [tuple(float(value) for value in rod.center) for rod in rods]
+        orientations = [tuple(float(value) for value in rod.orientation) for rod in rods]
+        connections: List[Dict[str, int]] = []
+        for rod in rods:
+            conn_dict = {end: int(group) for end, group in rod.connections.items()}
+            connections.append(conn_dict)
+        groups: Dict[int, List[Tuple[int, str]]] = {}
+        for group_id, group in manager.groups.items():
+            groups[int(group_id)] = [(int(idx), end) for idx, end in group.members]
+        state_payload = SimulationStatePayload(
+            centers=centers,
+            orientations=orientations,
+            connections=connections,
+            groups=groups,
+            next_group_id=manager.next_group_id(),
+        )
     return SimulationSnapshot(
         render_data=render_data,
         free_end_count=free_ends,
         largest_cluster_percent=largest_percent,
+        state_payload=state_payload,
     )
 
 
@@ -674,6 +728,124 @@ def collect_cube_segments(
         segments.append((start_proj[0], end_proj[0], depth))
     segments.sort(key=lambda item: item[2], reverse=True)
     return segments
+
+
+def save_simulation_state(
+    snapshot: SimulationSnapshot, path: Path = STATE_FILE_PATH
+) -> Optional[Path]:
+    payload = snapshot.state_payload
+    if payload is None:
+        return None
+    groups_serializable = {
+        str(group_id): [[int(idx), end] for idx, end in members]
+        for group_id, members in payload.groups.items()
+    }
+    data = {
+        "centers": payload.centers,
+        "orientations": payload.orientations,
+        "connections": payload.connections,
+        "groups": groups_serializable,
+        "next_group_id": payload.next_group_id,
+        "timestamp": time.time(),
+        "metadata": {
+            "rod_length": ROD_LENGTH,
+            "cube_size": CUBE_SIZE,
+            "max_group_size": MAX_GROUP_SIZE,
+        },
+    }
+    tmp_path = path.parent / f"{path.name}.tmp"
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+    tmp_path.replace(path)
+    return path
+
+
+def load_simulation_state(
+    path: Path = STATE_FILE_PATH,
+) -> Optional[Tuple[List[Rod], ConnectionManager]]:
+    if not path.exists():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    centers = data.get("centers")
+    orientations = data.get("orientations")
+    connections = data.get("connections")
+    groups_data = data.get("groups", {})
+    next_group_id = int(data.get("next_group_id", 0))
+
+    if not isinstance(centers, list) or not isinstance(orientations, list):
+        return None
+    if len(centers) != len(orientations):
+        return None
+    if connections is None:
+        connections = [{} for _ in centers]
+
+    rods: List[Rod] = []
+    for idx, (center_values, orientation_values) in enumerate(zip(centers, orientations)):
+        center_array = np.array(center_values, dtype=float)
+        center_array = clamp_to_cube(center_array)
+        orientation_array = np.array(orientation_values, dtype=float)
+        if np.linalg.norm(orientation_array) < 1e-6:
+            orientation_array = random_unit_vector()
+        else:
+            orientation_array = orientation_array / np.linalg.norm(orientation_array)
+        rod = Rod(center=center_array, orientation=orientation_array)
+        conn_dict = connections[idx] if idx < len(connections) else {}
+        for end, group_id in conn_dict.items():
+            try:
+                rod.connections[end] = int(group_id)
+            except (TypeError, ValueError):
+                continue
+        rods.append(rod)
+
+    manager = ConnectionManager()
+    manager.groups = {}
+    for key, members in groups_data.items():
+        try:
+            group_id = int(key)
+        except (TypeError, ValueError):
+            continue
+        group_members: List[Tuple[int, str]] = []
+        if isinstance(members, list):
+            for entry in members:
+                if (
+                    isinstance(entry, (list, tuple))
+                    and len(entry) == 2
+                    and isinstance(entry[0], (int, float))
+                    and isinstance(entry[1], str)
+                ):
+                    rod_idx = int(entry[0])
+                    if 0 <= rod_idx < len(rods):
+                        group_members.append((rod_idx, entry[1]))
+        manager.groups[group_id] = ConnectionGroup(members=group_members)
+
+    if manager.groups:
+        max_existing = max(manager.groups.keys())
+        next_group_id = max(next_group_id, max_existing + 1)
+    manager._next_id = next_group_id
+
+    return rods, manager
+
+
+def wait_for_state_snapshot(
+    state_queue: mp.Queue,
+    current_snapshot: SimulationSnapshot,
+    timeout: float = 5.0,
+) -> SimulationSnapshot:
+    deadline = time.perf_counter() + timeout
+    snapshot = current_snapshot
+    while time.perf_counter() < deadline:
+        if snapshot.state_payload is not None:
+            break
+        try:
+            snapshot = state_queue.get(timeout=0.2)
+        except queue.Empty:
+            continue
+    return snapshot
 
 
 def draw_scene(
@@ -749,8 +921,21 @@ def draw_voxel_scene(
 
 
 def simulation_worker(state_queue: mp.Queue, stop_event: mp.Event) -> None:
-    rods = create_rods(NUM_RODS)
-    manager = ConnectionManager()
+    loaded_state = load_simulation_state()
+    if loaded_state is not None:
+        rods, manager = loaded_state
+        print(
+            f"Lade gespeicherten Zustand mit {len(rods)} Rods aus {STATE_FILE_PATH}",
+            flush=True,
+        )
+        if len(rods) != NUM_RODS:
+            print(
+                f"Hinweis: gespeicherter Zustand enthält {len(rods)} Rods (Standard {NUM_RODS})",
+                flush=True,
+            )
+    else:
+        rods = create_rods(NUM_RODS)
+        manager = ConnectionManager()
     try:
         while not stop_event.is_set():
             update_rods(rods, manager)
@@ -759,10 +944,8 @@ def simulation_worker(state_queue: mp.Queue, stop_event: mp.Event) -> None:
             except queue.Full:
                 pass
     finally:
-        try:
-            state_queue.put_nowait(build_snapshot(rods, manager))
-        except queue.Full:
-            pass
+        final_snapshot = build_snapshot(rods, manager, include_state=True)
+        state_queue.put(final_snapshot)
 
 
 def run_headless_phase(
@@ -842,6 +1025,18 @@ def run_headless_phase(
         plt.close(fig)
 
     view_button.on_clicked(handle_view_click)
+
+    export_ax = fig.add_axes([0.64, 0.08, 0.26, 0.06])
+    export_button = Button(export_ax, "Rolling-Ball exportieren")
+
+    def handle_export_click(_: object) -> None:
+        if ui_state.rolling_result is None:
+            update_status("Bitte zuerst die Rolling-Ball-Simulation ausführen")
+            return
+        export_path = export_rolling_ball_result(ui_state.rolling_result)
+        update_status(f"Rolling-Ball-Export gespeichert in {export_path}")
+
+    export_button.on_clicked(handle_export_click)
 
     abort_ax = fig.add_axes([0.1, 0.08, 0.2, 0.06])
     abort_button = Button(abort_ax, "Simulation abbrechen", color="#c94c4c", hovercolor="#d96c6c")
@@ -1010,6 +1205,7 @@ def run_interactive_viewer(
             last_caption_update = now_ticks
 
     stop_event.set()
+    current_snapshot = wait_for_state_snapshot(state_queue, current_snapshot)
     worker.join(timeout=2.0)
     if worker.is_alive():
         worker.terminate()
@@ -1103,9 +1299,13 @@ def run_simulation() -> None:
 
     if ui_state.abort_requested:
         stop_event.set()
+        current_snapshot = wait_for_state_snapshot(state_queue, current_snapshot)
         worker.join(timeout=2.0)
         if worker.is_alive():
             worker.terminate()
+        saved_path = save_simulation_state(current_snapshot)
+        if saved_path is not None:
+            print(f"Simulationzustand in {saved_path} gespeichert", flush=True)
         return
 
     pygame.init()
@@ -1114,6 +1314,9 @@ def run_simulation() -> None:
         run_rolling_ball_viewer(ui_state.rolling_result)
 
     current_snapshot = run_interactive_viewer(state_queue, stop_event, worker, current_snapshot)
+    saved_path = save_simulation_state(current_snapshot)
+    if saved_path is not None:
+        print(f"Simulationzustand in {saved_path} gespeichert", flush=True)
 
     pygame.mouse.set_visible(True)
     pygame.quit()
