@@ -2,6 +2,7 @@ import math
 import multiprocessing as mp
 import queue
 import random
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -567,24 +568,11 @@ def simulation_worker(state_queue: mp.Queue, stop_event: mp.Event) -> None:
             pass
 
 
-def run_simulation() -> None:
-    pygame.init()
-    screen = pygame.display.set_mode((960, 720))
-    pygame.display.set_caption("Rod Brownian Motion Simulation")
-    clock = pygame.time.Clock()
-    font = pygame.font.SysFont("consolas", 20)
-
-    ctx = mp.get_context("spawn")
-    state_queue: mp.Queue = ctx.Queue(maxsize=2)
-    stop_event = ctx.Event()
-    worker = ctx.Process(target=simulation_worker, args=(state_queue, stop_event))
-    worker.start()
-
-    try:
-        current_snapshot: SimulationSnapshot = state_queue.get(timeout=5.0)
-    except queue.Empty:
-        current_snapshot = SimulationSnapshot(render_data=[], free_end_count=0, largest_cluster_percent=0.0)
-
+def run_headless_phase(
+    state_queue: mp.Queue,
+    stop_event: mp.Event,
+    current_snapshot: SimulationSnapshot,
+) -> SimulationSnapshot:
     plt.ion()
     fig, (ax_free, ax_cluster) = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
     ax_free.set_ylabel("Free Ends")
@@ -602,7 +590,59 @@ def run_simulation() -> None:
     history_free: deque[int] = deque(maxlen=600)
     history_cluster: deque[float] = deque(maxlen=600)
     sample_index = 0
-    last_chart_update = 0
+    last_chart_update = 0.0
+
+    while plt.fignum_exists(fig.number) and not stop_event.is_set():
+        updated = False
+        try:
+            while True:
+                current_snapshot = state_queue.get_nowait()
+                updated = True
+        except queue.Empty:
+            pass
+
+        if updated:
+            history_indices.append(sample_index)
+            history_free.append(current_snapshot.free_end_count)
+            history_cluster.append(current_snapshot.largest_cluster_percent)
+            sample_index += 1
+
+        now = time.perf_counter()
+        if updated and now - last_chart_update >= 0.05:
+            x_data = list(history_indices)
+            line_free.set_data(x_data, list(history_free))
+            line_cluster.set_data(x_data, list(history_cluster))
+            if x_data:
+                ax_free.set_xlim(
+                    x_data[0], x_data[-1] if x_data[-1] > x_data[0] else x_data[0] + 1
+                )
+            ax_free.relim()
+            ax_free.autoscale_view()
+            ax_cluster.relim()
+            ax_cluster.autoscale_view()
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+            last_chart_update = now
+
+        plt.pause(0.001)
+
+    plt.ioff()
+    if plt.fignum_exists(fig.number):
+        plt.close(fig)
+
+    return current_snapshot
+
+
+def run_interactive_viewer(
+    state_queue: mp.Queue,
+    stop_event: mp.Event,
+    worker: mp.Process,
+    current_snapshot: SimulationSnapshot,
+) -> SimulationSnapshot:
+    screen = pygame.display.set_mode((960, 720))
+    pygame.display.set_caption("Rod Brownian Motion Simulation")
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont("consolas", 20)
 
     initial_yaw = math.radians(45)
     initial_pitch = math.radians(20)
@@ -623,17 +663,16 @@ def run_simulation() -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:
-                    mouse_rotating = True
-                    pygame.mouse.get_rel()
-                    pygame.event.set_grab(True)
-                    pygame.mouse.set_visible(False)
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if event.button == 1:
-                    mouse_rotating = False
-                    pygame.event.set_grab(False)
-                    pygame.mouse.set_visible(True)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_rotating = True
+                pygame.mouse.get_rel()
+                pygame.event.set_grab(True)
+                pygame.mouse.set_visible(False)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                mouse_rotating = False
+                pygame.event.set_grab(False)
+                pygame.mouse.set_visible(True)
+
         received_update = False
         try:
             while True:
@@ -669,35 +708,17 @@ def run_simulation() -> None:
         if np.linalg.norm(move_direction) > 1e-6:
             move_direction = move_direction / np.linalg.norm(move_direction)
             speed_multiplier = 2.5 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0
-            camera.position += move_direction * camera.move_speed * speed_multiplier * (dt_ms / 1000.0)
+            camera.position += (
+                move_direction * camera.move_speed * speed_multiplier * (dt_ms / 1000.0)
+            )
 
         if received_update:
-            now = pygame.time.get_ticks()
+            now_ticks = pygame.time.get_ticks()
             if last_update_tick is not None:
-                delta = now - last_update_tick
+                delta = now_ticks - last_update_tick
                 if delta > 0:
                     update_fps_display = 1000.0 / delta
-            last_update_tick = now
-
-            history_indices.append(sample_index)
-            history_free.append(current_snapshot.free_end_count)
-            history_cluster.append(current_snapshot.largest_cluster_percent)
-            sample_index += 1
-
-            if now - last_chart_update >= 100:
-                x_data = list(history_indices)
-                line_free.set_data(x_data, list(history_free))
-                line_cluster.set_data(x_data, list(history_cluster))
-                if x_data:
-                    ax_free.set_xlim(x_data[0], x_data[-1] if x_data[-1] > x_data[0] else x_data[0] + 1)
-                ax_free.relim()
-                ax_free.autoscale_view()
-                ax_cluster.relim()
-                ax_cluster.autoscale_view()
-                fig.canvas.draw_idle()
-                fig.canvas.flush_events()
-                plt.pause(0.001)
-                last_chart_update = now
+            last_update_tick = now_ticks
 
         draw_scene(
             screen,
@@ -710,21 +731,39 @@ def run_simulation() -> None:
             ),
             font=font,
         )
-        now = pygame.time.get_ticks()
-        if now - last_caption_update >= 250:
+
+        now_ticks = pygame.time.get_ticks()
+        if now_ticks - last_caption_update >= 250:
             pygame.display.set_caption(
                 "Rod Brownian Motion Simulation - "
                 f"Render FPS: {render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f}"
             )
-            last_caption_update = now
+            last_caption_update = now_ticks
 
     stop_event.set()
     worker.join(timeout=2.0)
     if worker.is_alive():
         worker.terminate()
 
-    plt.ioff()
-    plt.close(fig)
+    return current_snapshot
+
+
+def run_simulation() -> None:
+    ctx = mp.get_context("spawn")
+    state_queue: mp.Queue = ctx.Queue(maxsize=2)
+    stop_event = ctx.Event()
+    worker = ctx.Process(target=simulation_worker, args=(state_queue, stop_event))
+    worker.start()
+
+    try:
+        current_snapshot: SimulationSnapshot = state_queue.get(timeout=5.0)
+    except queue.Empty:
+        current_snapshot = SimulationSnapshot(render_data=[], free_end_count=0, largest_cluster_percent=0.0)
+
+    current_snapshot = run_headless_phase(state_queue, stop_event, current_snapshot)
+
+    pygame.init()
+    current_snapshot = run_interactive_viewer(state_queue, stop_event, worker, current_snapshot)
 
     pygame.mouse.set_visible(True)
     pygame.quit()
