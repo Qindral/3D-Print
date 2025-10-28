@@ -12,8 +12,8 @@ CUBE_SIZE = 200.0
 ROD_LENGTH = 20.0
 NUM_RODS = 500
 TIME_STEP = 0.05
-TRANSLATION_SCALE = 2.5
-ROTATION_SCALE = 0.2
+TRANSLATION_SCALE = 7.5
+ROTATION_SCALE = 0.7
 CONNECTION_DISTANCE = 2.5
 BACKGROUND_COLOR = (15, 15, 25)
 ROD_COLOR = (180, 220, 255)
@@ -229,7 +229,7 @@ def run_simulation() -> None:
                     running = False
         update_rods(rods)
         draw_rods(screen, rods, angle_x, angle_y)
-        clock.tick(60)
+        #clock.tick(100)
 
     pygame.quit()
 
