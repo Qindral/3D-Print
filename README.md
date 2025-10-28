@@ -2,7 +2,7 @@
 
 ## Rod Brownian Motion Simulation
 
-Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends. The main window renders the rods in 3D while a second analytics window charts the number of free endpoints and the size of the largest connected structure over time.
+Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends. The program now starts with a fast headless phase that only streams analytics into a Matplotlib chart; once you close that figure, the interactive 3D renderer opens so you can orbit and explore the system.
 
 ```bash
 pip install -r requirements.txt
@@ -11,9 +11,9 @@ python rod_simulation.py
 
 ### Controls
 
-* **Rotate view** – Hold the left mouse button and drag to orbit the camera around the cube.
+* **Headless analytics first** – The simulation runs as quickly as possible without rendering while the Matplotlib figure is open. Close the chart window when you're ready to inspect the 3D view.
+* **Rotate view** – In the 3D phase, hold the left mouse button and drag to orbit the camera around the cube.
 * **Move camera** – Use `W`/`S` to move forward/backward, `A`/`D` to strafe, and `Space`/`Ctrl` (or `R`/`F`) to rise/lower. Hold `Shift` to move faster.
-* **Analytics window** – A Matplotlib window opens alongside the renderer and plots the count of free ends and the size of the largest connected cluster.
 
 ### Running the simulation online
 
