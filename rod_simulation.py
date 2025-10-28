@@ -4,7 +4,7 @@ import queue
 import random
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,6 +23,31 @@ BACKGROUND_COLOR = (15, 15, 25)
 ROD_COLOR = (180, 220, 255)
 CONNECTED_COLOR = (255, 150, 80)
 TEXT_COLOR = (240, 240, 240)
+FOV = math.radians(60.0)
+NEAR_PLANE = 5.0
+FAR_PLANE = 1200.0
+BASE_ROD_THICKNESS = 5.0
+CUBE_HALF = CUBE_SIZE / 2.0
+CUBE_VERTICES = [
+    np.array([x, y, z])
+    for x in (-CUBE_HALF, CUBE_HALF)
+    for y in (-CUBE_HALF, CUBE_HALF)
+    for z in (-CUBE_HALF, CUBE_HALF)
+]
+CUBE_EDGES = [
+    (0, 1),
+    (0, 2),
+    (0, 4),
+    (1, 3),
+    (1, 5),
+    (2, 3),
+    (2, 6),
+    (3, 7),
+    (4, 5),
+    (4, 6),
+    (5, 7),
+    (6, 7),
+]
 
 
 def random_unit_vector() -> np.ndarray:
@@ -295,28 +320,94 @@ def update_rods(rods: List[Rod], manager: ConnectionManager) -> None:
     enforce_connections(rods, manager)
 
 
-def project_point(point: np.ndarray, angle_x: float, angle_y: float, scale: float, screen_size: Tuple[int, int]) -> Tuple[int, int]:
-    rot_x = np.array(
-        [
-            [1, 0, 0],
-            [0, math.cos(angle_x), -math.sin(angle_x)],
-            [0, math.sin(angle_x), math.cos(angle_x)],
-        ]
-    )
-    rot_y = np.array(
-        [
-            [math.cos(angle_y), 0, math.sin(angle_y)],
-            [0, 1, 0],
-            [-math.sin(angle_y), 0, math.cos(angle_y)],
-        ]
-    )
-    rotated = rot_y @ (rot_x @ point)
-    x = rotated[0] * scale + screen_size[0] // 2
-    y = rotated[1] * scale + screen_size[1] // 2
-    return int(x), int(y)
+def project_point(
+    point: np.ndarray,
+    view_matrix: np.ndarray,
+    screen_size: Tuple[int, int],
+    camera_position: np.ndarray,
+) -> Tuple[Optional[Tuple[int, int]], float]:
+    relative = point - camera_position
+    view = view_matrix @ relative
+    depth = float(view[2])
+    if depth <= NEAR_PLANE or depth >= FAR_PLANE:
+        return (None, depth)
+    width, height = screen_size
+    aspect = width / height if height else 1.0
+    f = 1.0 / math.tan(FOV / 2.0)
+    x_ndc = (view[0] * f / aspect) / depth
+    y_ndc = (view[1] * f) / depth
+    screen_x = int((x_ndc + 1.0) * 0.5 * width)
+    screen_y = int((1.0 - y_ndc) * 0.5 * height)
+    return (screen_x, screen_y), depth
 
 
 RenderRod = Tuple[Tuple[float, float, float], Tuple[float, float, float], bool]
+
+
+@dataclass
+class CameraState:
+    position: np.ndarray
+    yaw: float
+    pitch: float
+    move_speed: float = 120.0
+    mouse_sensitivity: float = 0.005
+
+    def rotation_matrix(self) -> np.ndarray:
+        cos_y = math.cos(self.yaw)
+        sin_y = math.sin(self.yaw)
+        cos_p = math.cos(self.pitch)
+        sin_p = math.sin(self.pitch)
+
+        rot_yaw = np.array(
+            [
+                [cos_y, 0.0, sin_y],
+                [0.0, 1.0, 0.0],
+                [-sin_y, 0.0, cos_y],
+            ]
+        )
+        rot_pitch = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, cos_p, -sin_p],
+                [0.0, sin_p, cos_p],
+            ]
+        )
+        return rot_pitch @ rot_yaw
+
+    def forward(self) -> np.ndarray:
+        cos_p = math.cos(self.pitch)
+        sin_p = math.sin(self.pitch)
+        cos_y = math.cos(self.yaw)
+        sin_y = math.sin(self.yaw)
+        return np.array([sin_y * cos_p, -sin_p, cos_y * cos_p])
+
+    def right(self) -> np.ndarray:
+        cos_y = math.cos(self.yaw)
+        sin_y = math.sin(self.yaw)
+        return np.array([cos_y, 0.0, -sin_y])
+
+    def up(self) -> np.ndarray:
+        up_vector = np.cross(self.right(), self.forward())
+        norm = np.linalg.norm(up_vector)
+        if norm < 1e-6:
+            return np.array([0.0, 1.0, 0.0])
+        return up_vector / norm
+
+
+def depth_factor_from_distance(depth: float) -> float:
+    return min(max((depth - NEAR_PLANE) / (FAR_PLANE - NEAR_PLANE), 0.0), 1.0)
+
+
+def shade_color(base: Tuple[int, int, int], depth: float) -> Tuple[int, int, int]:
+    factor = depth_factor_from_distance(depth)
+    brightness = 1.0 - 0.6 * factor
+    return tuple(max(0, min(255, int(c * brightness))) for c in base)
+
+
+def thickness_for_depth(depth: float) -> int:
+    factor = depth_factor_from_distance(depth)
+    thickness = BASE_ROD_THICKNESS * (1.0 - 0.7 * factor)
+    return max(1, int(thickness))
 
 
 @dataclass
@@ -384,21 +475,47 @@ def build_snapshot(rods: List[Rod], manager: ConnectionManager) -> SimulationSna
     )
 
 
-def draw_rods(
+def draw_scene(
     screen: pygame.Surface,
     render_data: List[RenderRod],
-    angle_x: float,
-    angle_y: float,
+    camera: CameraState,
     overlay_text: str | None = None,
     font: pygame.font.Font | None = None,
 ) -> None:
     screen.fill(BACKGROUND_COLOR)
-    scale = screen.get_width() / (CUBE_SIZE * 0.8)
+    screen_size = screen.get_size()
+    view_matrix = camera.rotation_matrix()
+
+    cube_segments: List[Tuple[Tuple[int, int], Tuple[int, int], float]] = []
+    for start_idx, end_idx in CUBE_EDGES:
+        start_proj = project_point(CUBE_VERTICES[start_idx], view_matrix, screen_size, camera.position)
+        end_proj = project_point(CUBE_VERTICES[end_idx], view_matrix, screen_size, camera.position)
+        if start_proj[0] is None or end_proj[0] is None:
+            continue
+        depth = max(start_proj[1], end_proj[1])
+        cube_segments.append((start_proj[0], end_proj[0], depth))
+
+    cube_segments.sort(key=lambda item: item[2], reverse=True)
+    for start, end, depth in cube_segments:
+        color = shade_color((90, 90, 130), depth)
+        pygame.draw.line(screen, color, start, end, 1)
+
+    rod_segments: List[Tuple[Tuple[int, int], Tuple[int, int], float, Tuple[int, int, int], int]] = []
     for point_a_3d, point_b_3d, connected in render_data:
-        color = CONNECTED_COLOR if connected else ROD_COLOR
-        point_a = project_point(np.array(point_a_3d), angle_x, angle_y, scale, screen.get_size())
-        point_b = project_point(np.array(point_b_3d), angle_x, angle_y, scale, screen.get_size())
-        pygame.draw.line(screen, color, point_a, point_b, 2)
+        proj_a = project_point(np.array(point_a_3d), view_matrix, screen_size, camera.position)
+        proj_b = project_point(np.array(point_b_3d), view_matrix, screen_size, camera.position)
+        if proj_a[0] is None or proj_b[0] is None:
+            continue
+        avg_depth = (proj_a[1] + proj_b[1]) / 2.0
+        base_color = CONNECTED_COLOR if connected else ROD_COLOR
+        color = shade_color(base_color, avg_depth)
+        thickness = thickness_for_depth(avg_depth)
+        rod_segments.append((proj_a[0], proj_b[0], avg_depth, color, thickness))
+
+    rod_segments.sort(key=lambda item: item[2], reverse=True)
+    for start, end, _, color, thickness in rod_segments:
+        pygame.draw.line(screen, color, start, end, thickness)
+
     if overlay_text and font:
         text_surface = font.render(overlay_text, True, TEXT_COLOR)
         screen.blit(text_surface, (10, 10))
@@ -459,8 +576,11 @@ def run_simulation() -> None:
     sample_index = 0
     last_chart_update = 0
 
-    angle_x = math.radians(35)
-    angle_y = math.radians(45)
+    initial_yaw = math.radians(45)
+    initial_pitch = math.radians(20)
+    camera = CameraState(position=np.zeros(3), yaw=initial_yaw, pitch=initial_pitch)
+    camera.position = -camera.forward() * (CUBE_SIZE * 2.2)
+    mouse_rotating = False
     last_caption_update = 0
     update_fps_display = 0.0
     last_update_tick: int | None = None
@@ -475,6 +595,17 @@ def run_simulation() -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    mouse_rotating = True
+                    pygame.mouse.get_rel()
+                    pygame.event.set_grab(True)
+                    pygame.mouse.set_visible(False)
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if event.button == 1:
+                    mouse_rotating = False
+                    pygame.event.set_grab(False)
+                    pygame.mouse.set_visible(True)
         received_update = False
         try:
             while True:
@@ -482,6 +613,35 @@ def run_simulation() -> None:
                 received_update = True
         except queue.Empty:
             pass
+
+        if mouse_rotating:
+            delta_x, delta_y = pygame.mouse.get_rel()
+            camera.yaw += delta_x * camera.mouse_sensitivity
+            camera.pitch -= delta_y * camera.mouse_sensitivity
+            camera.pitch = max(min(camera.pitch, math.radians(89.0)), math.radians(-89.0))
+            camera.yaw = (camera.yaw + math.pi) % (2 * math.pi) - math.pi
+        else:
+            pygame.mouse.get_rel()
+
+        keys = pygame.key.get_pressed()
+        move_direction = np.zeros(3)
+        if keys[pygame.K_w]:
+            move_direction += camera.forward()
+        if keys[pygame.K_s]:
+            move_direction -= camera.forward()
+        if keys[pygame.K_d]:
+            move_direction += camera.right()
+        if keys[pygame.K_a]:
+            move_direction -= camera.right()
+        if keys[pygame.K_SPACE] or keys[pygame.K_r]:
+            move_direction += camera.up()
+        if keys[pygame.K_LCTRL] or keys[pygame.K_f]:
+            move_direction -= camera.up()
+
+        if np.linalg.norm(move_direction) > 1e-6:
+            move_direction = move_direction / np.linalg.norm(move_direction)
+            speed_multiplier = 2.5 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0
+            camera.position += move_direction * camera.move_speed * speed_multiplier * (dt_ms / 1000.0)
 
         if received_update:
             now = pygame.time.get_ticks()
@@ -511,11 +671,10 @@ def run_simulation() -> None:
                 plt.pause(0.001)
                 last_chart_update = now
 
-        draw_rods(
+        draw_scene(
             screen,
             current_snapshot.render_data,
-            angle_x,
-            angle_y,
+            camera,
             overlay_text=(
                 "Render FPS: "
                 f"{render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f} | "
@@ -539,6 +698,7 @@ def run_simulation() -> None:
     plt.ioff()
     plt.close(fig)
 
+    pygame.mouse.set_visible(True)
     pygame.quit()
 
 

@@ -9,6 +9,12 @@ pip install -r requirements.txt
 python rod_simulation.py
 ```
 
+### Controls
+
+* **Rotate view** – Hold the left mouse button and drag to orbit the camera around the cube.
+* **Move camera** – Use `W`/`S` to move forward/backward, `A`/`D` to strafe, and `Space`/`Ctrl` (or `R`/`F`) to rise/lower. Hold `Shift` to move faster.
+* **Analytics window** – A Matplotlib window opens alongside the renderer and plots the count of free ends and the size of the largest connected cluster.
+
 ### Running the simulation online
 
 The simulation relies on Pygame to open a desktop window, so it runs most reliably on your own computer where a graphical display is available. If you prefer to work in the cloud, consider one of the following options:
