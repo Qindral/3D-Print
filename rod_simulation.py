@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pygame
+from matplotlib.widgets import Button, TextBox
 
 
 # Simulation constants
@@ -446,6 +447,160 @@ class SimulationSnapshot:
     largest_cluster_percent: float
 
 
+@dataclass
+class RollingBallResult:
+    surface_points: np.ndarray
+    filled_voxel_count: int
+    total_voxel_count: int
+    fill_fraction: float
+    radius: float
+    voxel_size: float
+
+
+@dataclass
+class HeadlessUIState:
+    abort_requested: bool = False
+    rolling_radius: float = 12.0
+    rolling_result: Optional[RollingBallResult] = None
+    launch_rolling_viewer: bool = False
+    latest_snapshot: Optional[SimulationSnapshot] = None
+    status_message: str = "Bereit"
+
+
+def sphere_offsets(radius: int) -> List[Tuple[int, int, int]]:
+    if radius <= 0:
+        return [(0, 0, 0)]
+    offsets: List[Tuple[int, int, int]] = []
+    radius_sq = radius * radius
+    for dx in range(-radius, radius + 1):
+        for dy in range(-radius, radius + 1):
+            for dz in range(-radius, radius + 1):
+                if dx * dx + dy * dy + dz * dz <= radius_sq:
+                    offsets.append((dx, dy, dz))
+    if not offsets:
+        offsets.append((0, 0, 0))
+    return offsets
+
+
+def binary_dilation(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
+    result = np.zeros_like(grid, dtype=bool)
+    coords = np.argwhere(grid)
+    max_x, max_y, max_z = grid.shape
+    for x, y, z in coords:
+        for ox, oy, oz in offsets:
+            nx, ny, nz = x + ox, y + oy, z + oz
+            if 0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z:
+                result[nx, ny, nz] = True
+    return result
+
+
+def binary_erosion(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
+    result = np.zeros_like(grid, dtype=bool)
+    max_x, max_y, max_z = grid.shape
+    coords = np.argwhere(grid)
+    for x, y, z in coords:
+        keep = True
+        for ox, oy, oz in offsets:
+            nx, ny, nz = x + ox, y + oy, z + oz
+            if not (0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z):
+                keep = False
+                break
+            if not grid[nx, ny, nz]:
+                keep = False
+                break
+        if keep:
+            result[x, y, z] = True
+    return result
+
+
+def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarray:
+    coords = np.argwhere(occupancy)
+    if coords.size == 0:
+        return np.empty((0, 3), dtype=float)
+    max_x, max_y, max_z = occupancy.shape
+    neighbor_offsets = [
+        (-1, 0, 0),
+        (1, 0, 0),
+        (0, -1, 0),
+        (0, 1, 0),
+        (0, 0, -1),
+        (0, 0, 1),
+    ]
+    surface_indices: List[Tuple[int, int, int]] = []
+    occupancy_bool = occupancy.astype(bool, copy=False)
+    for x, y, z in coords:
+        for ox, oy, oz in neighbor_offsets:
+            nx, ny, nz = x + ox, y + oy, z + oz
+            if not (0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z):
+                surface_indices.append((x, y, z))
+                break
+            if not occupancy_bool[nx, ny, nz]:
+                surface_indices.append((x, y, z))
+                break
+    if not surface_indices:
+        surface_indices = [tuple(coord) for coord in coords]
+    surface_array = np.array(surface_indices, dtype=float)
+    centers = (surface_array + 0.5) * voxel_size - CUBE_HALF
+    return centers
+
+
+def run_rolling_ball_simulation(
+    render_data: List[RenderRod],
+    radius: float,
+    grid_resolution: int = 72,
+) -> RollingBallResult:
+    grid_shape = (grid_resolution, grid_resolution, grid_resolution)
+    occupancy = np.zeros(grid_shape, dtype=bool)
+    voxel_size = CUBE_SIZE / grid_resolution
+    half = CUBE_HALF
+
+    if not render_data:
+        return RollingBallResult(
+            surface_points=np.empty((0, 3), dtype=float),
+            filled_voxel_count=0,
+            total_voxel_count=int(np.prod(grid_shape)),
+            fill_fraction=0.0,
+            radius=radius,
+            voxel_size=voxel_size,
+        )
+
+    samples_per_rod = max(4, int(math.ceil(ROD_LENGTH / max(voxel_size * 0.5, 1e-6))))
+    thickness_radius = max(0, int(math.ceil((BASE_ROD_THICKNESS * 0.5) / max(voxel_size, 1e-6))))
+    thickness_offsets = sphere_offsets(thickness_radius)
+
+    for point_a, point_b, _ in render_data:
+        start = np.array(point_a, dtype=float)
+        end = np.array(point_b, dtype=float)
+        for t in np.linspace(0.0, 1.0, samples_per_rod):
+            position = start * (1.0 - t) + end * t
+            idx = np.floor((position + half) / voxel_size).astype(int)
+            ix, iy, iz = np.clip(idx, 0, grid_resolution - 1)
+            for ox, oy, oz in thickness_offsets:
+                nx, ny, nz = ix + ox, iy + oy, iz + oz
+                if 0 <= nx < grid_resolution and 0 <= ny < grid_resolution and 0 <= nz < grid_resolution:
+                    occupancy[nx, ny, nz] = True
+
+    radius_vox = max(1, min(grid_resolution // 2, int(math.ceil(radius / max(voxel_size, 1e-6)))))
+    structuring = sphere_offsets(radius_vox)
+
+    dilated = binary_dilation(occupancy, structuring)
+    closed = binary_erosion(dilated, structuring)
+
+    filled_voxel_count = int(np.count_nonzero(closed))
+    total_voxel_count = int(closed.size)
+    fill_fraction = (filled_voxel_count / total_voxel_count) if total_voxel_count else 0.0
+    surface_points = extract_surface_points(closed, voxel_size)
+
+    return RollingBallResult(
+        surface_points=surface_points,
+        filled_voxel_count=filled_voxel_count,
+        total_voxel_count=total_voxel_count,
+        fill_fraction=fill_fraction,
+        radius=radius,
+        voxel_size=voxel_size,
+    )
+
+
 def compute_metrics(rods: List[Rod], manager: ConnectionManager) -> Tuple[int, float]:
     free_ends = 0
     adjacency: List[set[int]] = [set() for _ in rods]
@@ -504,6 +659,23 @@ def build_snapshot(rods: List[Rod], manager: ConnectionManager) -> SimulationSna
     )
 
 
+def collect_cube_segments(
+    view_matrix: np.ndarray,
+    screen_size: Tuple[int, int],
+    camera: CameraState,
+) -> List[Tuple[Tuple[int, int], Tuple[int, int], float]]:
+    segments: List[Tuple[Tuple[int, int], Tuple[int, int], float]] = []
+    for start_idx, end_idx in CUBE_EDGES:
+        start_proj = project_point(CUBE_VERTICES[start_idx], view_matrix, screen_size, camera.position)
+        end_proj = project_point(CUBE_VERTICES[end_idx], view_matrix, screen_size, camera.position)
+        if start_proj[0] is None or end_proj[0] is None:
+            continue
+        depth = max(start_proj[1], end_proj[1])
+        segments.append((start_proj[0], end_proj[0], depth))
+    segments.sort(key=lambda item: item[2], reverse=True)
+    return segments
+
+
 def draw_scene(
     screen: pygame.Surface,
     render_data: List[RenderRod],
@@ -515,17 +687,7 @@ def draw_scene(
     screen_size = screen.get_size()
     view_matrix = camera.rotation_matrix()
 
-    cube_segments: List[Tuple[Tuple[int, int], Tuple[int, int], float]] = []
-    for start_idx, end_idx in CUBE_EDGES:
-        start_proj = project_point(CUBE_VERTICES[start_idx], view_matrix, screen_size, camera.position)
-        end_proj = project_point(CUBE_VERTICES[end_idx], view_matrix, screen_size, camera.position)
-        if start_proj[0] is None or end_proj[0] is None:
-            continue
-        depth = max(start_proj[1], end_proj[1])
-        cube_segments.append((start_proj[0], end_proj[0], depth))
-
-    cube_segments.sort(key=lambda item: item[2], reverse=True)
-    for start, end, depth in cube_segments:
+    for start, end, depth in collect_cube_segments(view_matrix, screen_size, camera):
         color = shade_color((90, 90, 130), depth)
         pygame.draw.line(screen, color, start, end, 1)
 
@@ -544,6 +706,41 @@ def draw_scene(
     rod_segments.sort(key=lambda item: item[2], reverse=True)
     for start, end, _, color, thickness in rod_segments:
         pygame.draw.line(screen, color, start, end, thickness)
+
+    if overlay_text and font:
+        text_surface = font.render(overlay_text, True, TEXT_COLOR)
+        screen.blit(text_surface, (10, 10))
+    pygame.display.flip()
+
+
+def draw_voxel_scene(
+    screen: pygame.Surface,
+    surface_points: np.ndarray,
+    camera: CameraState,
+    overlay_text: str | None = None,
+    font: pygame.font.Font | None = None,
+) -> None:
+    screen.fill(BACKGROUND_COLOR)
+    screen_size = screen.get_size()
+    view_matrix = camera.rotation_matrix()
+
+    for start, end, depth in collect_cube_segments(view_matrix, screen_size, camera):
+        color = shade_color((90, 90, 130), depth)
+        pygame.draw.line(screen, color, start, end, 1)
+
+    point_entries: List[Tuple[float, Tuple[int, int], Tuple[int, int, int], int]] = []
+    for point in surface_points:
+        proj = project_point(np.array(point), view_matrix, screen_size, camera.position)
+        screen_pos, depth = proj
+        if screen_pos is None:
+            continue
+        color = shade_color(CONNECTED_COLOR, depth)
+        radius = max(1, int(BASE_ROD_THICKNESS * 0.4 * (1.0 - depth_factor_from_distance(depth))))
+        point_entries.append((depth, screen_pos, color, radius))
+
+    point_entries.sort(key=lambda item: item[0], reverse=True)
+    for depth, screen_pos, color, radius in point_entries:
+        pygame.draw.circle(screen, color, screen_pos, radius)
 
     if overlay_text and font:
         text_surface = font.render(overlay_text, True, TEXT_COLOR)
@@ -572,9 +769,10 @@ def run_headless_phase(
     state_queue: mp.Queue,
     stop_event: mp.Event,
     current_snapshot: SimulationSnapshot,
-) -> SimulationSnapshot:
+) -> Tuple[SimulationSnapshot, HeadlessUIState]:
     plt.ion()
-    fig, (ax_free, ax_cluster) = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
+    fig, (ax_free, ax_cluster) = plt.subplots(2, 1, figsize=(7, 7), sharex=True)
+    fig.subplots_adjust(bottom=0.28)
     ax_free.set_ylabel("Free Ends")
     ax_cluster.set_ylabel("Largest Cluster %")
     ax_cluster.set_xlabel("Simulation Samples")
@@ -584,7 +782,77 @@ def run_headless_phase(
     line_cluster, = ax_cluster.plot([], [], color="tab:orange", label="Largest %")
     ax_free.legend(loc="upper right")
     ax_cluster.legend(loc="upper right")
-    fig.tight_layout()
+    fig.tight_layout(rect=(0.02, 0.28, 0.98, 0.98))
+
+    ui_state = HeadlessUIState(latest_snapshot=current_snapshot)
+
+    status_text = fig.text(0.02, 0.02, f"Status: {ui_state.status_message}")
+
+    def update_status(message: str) -> None:
+        ui_state.status_message = message
+        status_text.set_text(f"Status: {message}")
+        fig.canvas.draw_idle()
+
+    radius_ax = fig.add_axes([0.1, 0.18, 0.2, 0.05])
+    radius_box = TextBox(radius_ax, "Ball radius", initial=f"{ui_state.rolling_radius:.1f}")
+
+    def handle_radius_submit(text: str) -> None:
+        try:
+            value = float(text)
+            if value <= 0:
+                raise ValueError
+        except ValueError:
+            update_status("Ungültiger Radius – bitte eine positive Zahl eingeben")
+            radius_box.set_val(f"{ui_state.rolling_radius:.1f}")
+            return
+        ui_state.rolling_radius = value
+        update_status(f"Rolling-Ball-Radius gesetzt auf {value:.2f}")
+
+    radius_box.on_submit(handle_radius_submit)
+
+    roll_ax = fig.add_axes([0.35, 0.17, 0.25, 0.06])
+    roll_button = Button(roll_ax, "Rolling-Ball ausführen")
+
+    def handle_roll_click(_: object) -> None:
+        snapshot = ui_state.latest_snapshot or current_snapshot
+        if snapshot is None:
+            update_status("Keine Snapshot-Daten verfügbar")
+            return
+        update_status("Rolling-Ball-Simulation läuft …")
+        fig.canvas.draw()
+        result = run_rolling_ball_simulation(snapshot.render_data, ui_state.rolling_radius)
+        ui_state.rolling_result = result
+        filled_percent = result.fill_fraction * 100.0
+        update_status(
+            f"Rolling-Ball fertig – {result.filled_voxel_count} von {result.total_voxel_count} Voxeln ("
+            f"{filled_percent:.2f}%)"
+        )
+
+    roll_button.on_clicked(handle_roll_click)
+
+    view_ax = fig.add_axes([0.64, 0.17, 0.26, 0.06])
+    view_button = Button(view_ax, "3D-Ansicht anzeigen")
+
+    def handle_view_click(_: object) -> None:
+        if ui_state.rolling_result is None:
+            update_status("Bitte zuerst die Rolling-Ball-Simulation ausführen")
+            return
+        ui_state.launch_rolling_viewer = True
+        update_status("Rolling-Ball-Viewer wird geöffnet")
+        plt.close(fig)
+
+    view_button.on_clicked(handle_view_click)
+
+    abort_ax = fig.add_axes([0.1, 0.08, 0.2, 0.06])
+    abort_button = Button(abort_ax, "Simulation abbrechen", color="#c94c4c", hovercolor="#d96c6c")
+
+    def handle_abort_click(_: object) -> None:
+        ui_state.abort_requested = True
+        update_status("Abbruch angefordert – schließe Simulation")
+        stop_event.set()
+        plt.close(fig)
+
+    abort_button.on_clicked(handle_abort_click)
 
     history_indices: deque[int] = deque(maxlen=600)
     history_free: deque[int] = deque(maxlen=600)
@@ -597,6 +865,7 @@ def run_headless_phase(
         try:
             while True:
                 current_snapshot = state_queue.get_nowait()
+                ui_state.latest_snapshot = current_snapshot
                 updated = True
         except queue.Empty:
             pass
@@ -630,7 +899,7 @@ def run_headless_phase(
     if plt.fignum_exists(fig.number):
         plt.close(fig)
 
-    return current_snapshot
+    return current_snapshot, ui_state
 
 
 def run_interactive_viewer(
@@ -749,6 +1018,76 @@ def run_interactive_viewer(
     return current_snapshot
 
 
+def run_rolling_ball_viewer(result: RollingBallResult) -> None:
+    screen = pygame.display.set_mode((960, 720))
+    pygame.display.set_caption("Rolling-Ball-Organik")
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont("consolas", 20)
+
+    initial_yaw = math.radians(45)
+    initial_pitch = math.radians(20)
+    camera = CameraState(position=np.zeros(3), yaw=initial_yaw, pitch=initial_pitch)
+    camera.position = -camera.forward() * (CUBE_SIZE * 2.0)
+    mouse_rotating = False
+
+    running = True
+    while running:
+        dt_ms = clock.tick(60)
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_rotating = True
+                pygame.mouse.get_rel()
+                pygame.event.set_grab(True)
+                pygame.mouse.set_visible(False)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                mouse_rotating = False
+                pygame.event.set_grab(False)
+                pygame.mouse.set_visible(True)
+
+        if mouse_rotating:
+            delta_x, delta_y = pygame.mouse.get_rel()
+            camera.yaw += delta_x * camera.mouse_sensitivity
+            camera.pitch -= delta_y * camera.mouse_sensitivity
+            camera.pitch = max(min(camera.pitch, math.radians(89.0)), math.radians(-89.0))
+            camera.yaw = (camera.yaw + math.pi) % (2 * math.pi) - math.pi
+        else:
+            pygame.mouse.get_rel()
+
+        keys = pygame.key.get_pressed()
+        move_direction = np.zeros(3)
+        if keys[pygame.K_w]:
+            move_direction += camera.forward()
+        if keys[pygame.K_s]:
+            move_direction -= camera.forward()
+        if keys[pygame.K_d]:
+            move_direction += camera.right()
+        if keys[pygame.K_a]:
+            move_direction -= camera.right()
+        if keys[pygame.K_SPACE] or keys[pygame.K_r]:
+            move_direction += camera.up()
+        if keys[pygame.K_LCTRL] or keys[pygame.K_f]:
+            move_direction -= camera.up()
+
+        if np.linalg.norm(move_direction) > 1e-6:
+            move_direction = move_direction / np.linalg.norm(move_direction)
+            speed_multiplier = 2.5 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0
+            camera.position += move_direction * camera.move_speed * speed_multiplier * (dt_ms / 1000.0)
+
+        overlay_text = (
+            f"Radius: {result.radius:.2f} | Füllung: {result.fill_fraction * 100.0:5.2f}% | "
+            f"Oberflächenpunkte: {len(result.surface_points)}"
+        )
+
+        draw_voxel_scene(screen, result.surface_points, camera, overlay_text=overlay_text, font=font)
+
+    pygame.event.set_grab(False)
+    pygame.mouse.set_visible(True)
+
+
 def run_simulation() -> None:
     ctx = mp.get_context("spawn")
     state_queue: mp.Queue = ctx.Queue(maxsize=2)
@@ -761,9 +1100,20 @@ def run_simulation() -> None:
     except queue.Empty:
         current_snapshot = SimulationSnapshot(render_data=[], free_end_count=0, largest_cluster_percent=0.0)
 
-    current_snapshot = run_headless_phase(state_queue, stop_event, current_snapshot)
+    current_snapshot, ui_state = run_headless_phase(state_queue, stop_event, current_snapshot)
+
+    if ui_state.abort_requested:
+        stop_event.set()
+        worker.join(timeout=2.0)
+        if worker.is_alive():
+            worker.terminate()
+        return
 
     pygame.init()
+
+    if ui_state.launch_rolling_viewer and ui_state.rolling_result is not None:
+        run_rolling_ball_viewer(ui_state.rolling_result)
+
     current_snapshot = run_interactive_viewer(state_queue, stop_event, worker, current_snapshot)
 
     pygame.mouse.set_visible(True)

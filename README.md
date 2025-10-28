@@ -2,7 +2,7 @@
 
 ## Rod Brownian Motion Simulation
 
-Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends. The program now starts with a fast headless phase that only streams analytics into a Matplotlib chart; once you close that figure, the interactive 3D renderer opens so you can orbit and explore the system.
+Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends. The program now starts with a fast headless phase that streams analytics into a Matplotlib chart and exposes a small control panel. From there you can abort the physics run, launch a "rolling ball" post-processing step, and open a dedicated 3D viewer for the resulting organic volume before proceeding to the main rod renderer.
 
 ```bash
 pip install -r requirements.txt
@@ -11,9 +11,9 @@ python rod_simulation.py
 
 ### Controls
 
-* **Headless analytics first** – The simulation runs as quickly as possible without rendering while the Matplotlib figure is open. Close the chart window when you're ready to inspect the 3D view.
-* **Rotate view** – In the 3D phase, hold the left mouse button and drag to orbit the camera around the cube.
-* **Move camera** – Use `W`/`S` to move forward/backward, `A`/`D` to strafe, and `Space`/`Ctrl` (or `R`/`F`) to rise/lower. Hold `Shift` to move faster.
+* **Headless analytics + UI** – While the Matplotlib window is open the simulation runs headlessly as fast as possible. Use the buttons to abort, trigger the rolling-ball pass (enter a ball radius in simulation units), or open the generated organic shape in a 3D viewer. Close the chart window to move on to the real-time rod renderer.
+* **Rolling-ball viewer** – After running the rolling-ball pass, click the "3D-Ansicht anzeigen" button to inspect the smoothed voxel cloud. Use the same controls as the rod viewer (mouse drag to orbit, `WASD` + `Space`/`Ctrl` to move, `Shift` to sprint, `Esc` to close).
+* **Main rod viewer** – When the Matplotlib window closes (either manually or after launching the rolling-ball viewer) the Pygame window opens and renders the live rod simulation. Camera controls match the rolling-ball view.
 
 ### Running the simulation online
 
