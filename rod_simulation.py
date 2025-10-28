@@ -10,9 +10,9 @@ import pygame
 
 
 # Simulation constants
-CUBE_SIZE = 40.0
+CUBE_SIZE = 100.0
 ROD_LENGTH = 10.0
-NUM_RODS = 580
+NUM_RODS = 1200
 TIME_STEP = 0.05
 TRANSLATION_SCALE = 2.5
 ROTATION_SCALE = 0.2
