@@ -126,7 +126,7 @@ class HeadlessUIState:
 
     # Metric histories for plotting convenience
     history_indices: deque[int] = field(default_factory=lambda: deque(maxlen=600))
-    history_free: deque[int] = field(default_factory=lambda: deque(maxlen=600))
+    history_free: deque[float] = field(default_factory=lambda: deque(maxlen=600))
     history_cluster: deque[float] = field(default_factory=lambda: deque(maxlen=600))
 
 

@@ -109,6 +109,9 @@ def run_interactive_viewer(
             last_update_tick = now_ticks
 
         overlay_status = "PAUSIERT" if pause_event.is_set() else "Aktiv"
+        rod_count = max(1, len(current_snapshot.render_data))
+        total_endpoints = rod_count * 2
+        free_percent = (current_snapshot.free_end_count / total_endpoints) * 100.0
 
         draw_scene(
             screen,
@@ -118,8 +121,8 @@ def run_interactive_viewer(
                 "Render FPS: "
                 f"{render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f} | "
                 f"Status: {overlay_status} | "
-                f"Free ends: {current_snapshot.free_end_count:4d} | "
-                f"Largest cluster: {current_snapshot.largest_cluster_percent:5.1f}%"
+                f"Freie Enden: {free_percent:5.1f}% | "
+                f"Größter Cluster: {current_snapshot.largest_cluster_percent:5.1f}% der Rods"
             ),
             font=font,
         )
