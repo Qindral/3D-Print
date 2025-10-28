@@ -48,10 +48,8 @@ def run_interactive_viewer(
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
 
-    initial_yaw = math.radians(45)
-    initial_pitch = math.radians(20)
-    camera = CameraState(position=np.zeros(3), yaw=initial_yaw, pitch=initial_pitch)
-    camera.position = -camera.forward() * DEFAULT_CAMERA_DISTANCE
+    camera = CameraState(position=np.zeros(3))
+    camera.position = np.array([0.0, 0.0, -DEFAULT_CAMERA_DISTANCE])
     mouse_rotating = False
     last_caption_update = 0
     update_fps_display = 0.0
@@ -140,10 +138,8 @@ def run_rolling_ball_viewer(result: RollingBallResult) -> None:
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("consolas", 20)
 
-    initial_yaw = math.radians(45)
-    initial_pitch = math.radians(20)
-    camera = CameraState(position=np.zeros(3), yaw=initial_yaw, pitch=initial_pitch)
-    camera.position = -camera.forward() * DEFAULT_CAMERA_DISTANCE
+    camera = CameraState(position=np.zeros(3))
+    camera.position = np.array([0.0, 0.0, -DEFAULT_CAMERA_DISTANCE])
     mouse_rotating = False
 
     running = True
