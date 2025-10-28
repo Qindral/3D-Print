@@ -33,16 +33,10 @@ def random_unit_vector() -> np.ndarray:
 
 
 @dataclass
-class Connection:
-    other_id: int
-    other_end: str
-
-
-@dataclass
 class Rod:
     center: np.ndarray
     orientation: np.ndarray
-    connections: Dict[str, Connection] = field(default_factory=dict)
+    connections: Dict[str, int] = field(default_factory=dict)
 
     def endpoints(self) -> Dict[str, np.ndarray]:
         offset = self.orientation * (ROD_LENGTH / 2.0)
@@ -53,9 +47,6 @@ class Rod:
 
     def has_free_end(self, end: str) -> bool:
         return end not in self.connections
-
-    def is_connected_to(self, other_id: int) -> bool:
-        return any(conn.other_id == other_id for conn in self.connections.values())
 
     def apply_translation(self, delta: np.ndarray) -> None:
         self.center += delta
@@ -89,9 +80,69 @@ class Rod:
         self.orientation = rot @ self.orientation
         self.orientation /= np.linalg.norm(self.orientation)
 
-    def enforce_connection(self, end: str, anchor: np.ndarray) -> None:
+    def enforce_single_anchor(self, end: str, anchor: np.ndarray) -> None:
         direction = 1.0 if end == "A" else -1.0
         self.center = anchor - direction * self.orientation * (ROD_LENGTH / 2.0)
+
+    def enforce_dual_anchors(self, anchor_a: np.ndarray, anchor_b: np.ndarray) -> None:
+        direction = anchor_a - anchor_b
+        norm = np.linalg.norm(direction)
+        if norm < 1e-6:
+            return
+        direction /= norm
+        self.orientation = direction
+        midpoint = (anchor_a + anchor_b) / 2.0
+        self.center = midpoint
+
+
+@dataclass
+class ConnectionGroup:
+    members: List[Tuple[int, str]] = field(default_factory=list)
+
+
+class ConnectionManager:
+    def __init__(self) -> None:
+        self.groups: Dict[int, ConnectionGroup] = {}
+        self._next_id = 0
+
+    def create_group(self, member_a: Tuple[int, str], member_b: Tuple[int, str]) -> int:
+        group_id = self._next_id
+        self._next_id += 1
+        self.groups[group_id] = ConnectionGroup(members=[member_a, member_b])
+        return group_id
+
+    def add_member(self, group_id: int, member: Tuple[int, str]) -> None:
+        group = self.groups.get(group_id)
+        if group is None:
+            return
+        if member not in group.members:
+            group.members.append(member)
+
+    def merge_groups(self, target_id: int, source_id: int, rods: List[Rod]) -> None:
+        if target_id == source_id:
+            return
+        target = self.groups.get(target_id)
+        if target is None:
+            return
+        source = self.groups.pop(source_id, None)
+        if source is None:
+            return
+        for member in source.members:
+            rod_idx, end = member
+            rods[rod_idx].connections[end] = target_id
+            if member not in target.members:
+                target.members.append(member)
+
+    def anchors(self, rods: List[Rod]) -> Dict[int, np.ndarray]:
+        anchor_map: Dict[int, np.ndarray] = {}
+        for group_id, group in self.groups.items():
+            if not group.members:
+                continue
+            accumulator = np.zeros(3)
+            for rod_idx, end in group.members:
+                accumulator += rods[rod_idx].endpoints()[end]
+            anchor_map[group_id] = accumulator / len(group.members)
+        return anchor_map
 
 
 def create_rods(num_rods: int) -> List[Rod]:
@@ -128,50 +179,66 @@ def distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(a - b))
 
 
-def attempt_connections(rods: List[Rod]) -> None:
-    free_ends: List[Tuple[int, str, np.ndarray]] = []
+def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
+    endpoints: List[Tuple[int, str, np.ndarray]] = []
     for idx, rod in enumerate(rods):
         for end, pos in rod.endpoints().items():
-            if rod.has_free_end(end):
-                free_ends.append((idx, end, pos))
+            endpoints.append((idx, end, pos))
 
-    random.shuffle(free_ends)
-    for i in range(len(free_ends)):
-        rod_i, end_i, pos_i = free_ends[i]
-        if not rods[rod_i].has_free_end(end_i):
-            continue
-        for j in range(i + 1, len(free_ends)):
-            rod_j, end_j, pos_j = free_ends[j]
-            if rod_i == rod_j or not rods[rod_j].has_free_end(end_j):
+    random.shuffle(endpoints)
+    for i in range(len(endpoints)):
+        rod_i, end_i, pos_i = endpoints[i]
+        group_i = rods[rod_i].connections.get(end_i)
+        for j in range(i + 1, len(endpoints)):
+            rod_j, end_j, pos_j = endpoints[j]
+            if rod_i == rod_j:
                 continue
-            # Enforce that only complementary ends (A-B) can connect.
             if end_i == end_j:
                 continue
-            if rods[rod_i].is_connected_to(rod_j):
+            group_j = rods[rod_j].connections.get(end_j)
+            if group_i is not None and group_j is not None and group_i == group_j:
                 continue
-            if distance(pos_i, pos_j) <= CONNECTION_DISTANCE:
-                rods[rod_i].connections[end_i] = Connection(rod_j, end_j)
-                rods[rod_j].connections[end_j] = Connection(rod_i, end_i)
+            if distance(pos_i, pos_j) > CONNECTION_DISTANCE:
+                continue
+
+            if group_i is None and group_j is None:
+                group_id = manager.create_group((rod_i, end_i), (rod_j, end_j))
+                rods[rod_i].connections[end_i] = group_id
+                rods[rod_j].connections[end_j] = group_id
+                break
+            if group_i is not None and group_j is None:
+                manager.add_member(group_i, (rod_j, end_j))
+                rods[rod_j].connections[end_j] = group_i
+                break
+            if group_i is None and group_j is not None:
+                manager.add_member(group_j, (rod_i, end_i))
+                rods[rod_i].connections[end_i] = group_j
+                break
+            if group_i is not None and group_j is not None and group_i != group_j:
+                target, source = (group_i, group_j)
+                if source < target:
+                    target, source = source, target
+                manager.merge_groups(target, source, rods)
                 break
 
 
-def enforce_connections(rods: List[Rod]) -> None:
-    processed: set[Tuple[int, str]] = set()
+def enforce_connections(rods: List[Rod], manager: ConnectionManager) -> None:
+    anchor_map = manager.anchors(rods)
     for idx, rod in enumerate(rods):
-        for end, conn in rod.connections.items():
-            key = (idx, end)
-            if key in processed:
-                continue
-            other = rods[conn.other_id]
-            other_end = conn.other_end
-            anchor = (rod.endpoints()[end] + other.endpoints()[other_end]) / 2.0
-            rod.enforce_connection(end, anchor)
-            other.enforce_connection(other_end, anchor)
-            processed.add(key)
-            processed.add((conn.other_id, other_end))
+        group_a = rod.connections.get("A")
+        group_b = rod.connections.get("B")
+        anchor_a = anchor_map.get(group_a) if group_a is not None else None
+        anchor_b = anchor_map.get(group_b) if group_b is not None else None
+
+        if anchor_a is not None and anchor_b is not None and group_a != group_b:
+            rod.enforce_dual_anchors(anchor_a, anchor_b)
+        elif anchor_a is not None:
+            rod.enforce_single_anchor("A", anchor_a)
+        elif anchor_b is not None:
+            rod.enforce_single_anchor("B", anchor_b)
 
 
-def update_rods(rods: List[Rod]) -> None:
+def update_rods(rods: List[Rod], manager: ConnectionManager) -> None:
     for rod in rods:
         delta = random_displacement(TRANSLATION_SCALE) * TIME_STEP
         rod.apply_translation(delta)
@@ -179,9 +246,9 @@ def update_rods(rods: List[Rod]) -> None:
         rod.apply_rotation(axis, angle * TIME_STEP)
         rod.center = clamp_to_cube(rod.center)
 
-    enforce_connections(rods)
-    attempt_connections(rods)
-    enforce_connections(rods)
+    enforce_connections(rods, manager)
+    attempt_connections(rods, manager)
+    enforce_connections(rods, manager)
 
 
 def project_point(point: np.ndarray, angle_x: float, angle_y: float, scale: float, screen_size: Tuple[int, int]) -> Tuple[int, int]:
@@ -245,9 +312,10 @@ def draw_rods(
 
 def simulation_worker(state_queue: mp.Queue, stop_event: mp.Event) -> None:
     rods = create_rods(NUM_RODS)
+    manager = ConnectionManager()
     try:
         while not stop_event.is_set():
-            update_rods(rods)
+            update_rods(rods, manager)
             try:
                 state_queue.put_nowait(snapshot_rods(rods))
             except queue.Full:
