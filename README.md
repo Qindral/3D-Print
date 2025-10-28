@@ -2,7 +2,7 @@
 
 ## Rod Brownian Motion Simulation
 
-Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends.
+Install the required dependencies and run the simulation to watch 500 rods moving in a cube while forming connections between complementary ends. The main window renders the rods in 3D while a second analytics window charts the number of free endpoints and the size of the largest connected structure over time.
 
 ```bash
 pip install -r requirements.txt

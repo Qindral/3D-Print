@@ -2,9 +2,11 @@ import math
 import multiprocessing as mp
 import queue
 import random
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pygame
 
@@ -317,7 +319,53 @@ def project_point(point: np.ndarray, angle_x: float, angle_y: float, scale: floa
 RenderRod = Tuple[Tuple[float, float, float], Tuple[float, float, float], bool]
 
 
-def snapshot_rods(rods: Iterable[Rod]) -> List[RenderRod]:
+@dataclass
+class SimulationSnapshot:
+    render_data: List[RenderRod]
+    free_end_count: int
+    largest_cluster_percent: float
+
+
+def compute_metrics(rods: List[Rod], manager: ConnectionManager) -> Tuple[int, float]:
+    free_ends = 0
+    adjacency: List[set[int]] = [set() for _ in rods]
+
+    for idx, rod in enumerate(rods):
+        if "A" not in rod.connections:
+            free_ends += 1
+        if "B" not in rod.connections:
+            free_ends += 1
+
+    for group in manager.groups.values():
+        if not group.members:
+            continue
+        rod_indices = {member[0] for member in group.members}
+        if len(rod_indices) <= 1:
+            continue
+        for rod_idx in rod_indices:
+            adjacency[rod_idx].update(rod_indices - {rod_idx})
+
+    visited = set()
+    largest_component = 0
+    for idx in range(len(rods)):
+        if idx in visited:
+            continue
+        stack = [idx]
+        component_size = 0
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            component_size += 1
+            stack.extend(neigh for neigh in adjacency[node] if neigh not in visited)
+        largest_component = max(largest_component, component_size)
+
+    percent = (largest_component / len(rods) * 100.0) if rods else 0.0
+    return free_ends, percent
+
+
+def build_snapshot(rods: List[Rod], manager: ConnectionManager) -> SimulationSnapshot:
     render_data: List[RenderRod] = []
     for rod in rods:
         endpoints = rod.endpoints()
@@ -328,7 +376,12 @@ def snapshot_rods(rods: Iterable[Rod]) -> List[RenderRod]:
                 bool(rod.connections),
             )
         )
-    return render_data
+    free_ends, largest_percent = compute_metrics(rods, manager)
+    return SimulationSnapshot(
+        render_data=render_data,
+        free_end_count=free_ends,
+        largest_cluster_percent=largest_percent,
+    )
 
 
 def draw_rods(
@@ -359,12 +412,12 @@ def simulation_worker(state_queue: mp.Queue, stop_event: mp.Event) -> None:
         while not stop_event.is_set():
             update_rods(rods, manager)
             try:
-                state_queue.put_nowait(snapshot_rods(rods))
+                state_queue.put_nowait(build_snapshot(rods, manager))
             except queue.Full:
                 pass
     finally:
         try:
-            state_queue.put_nowait(snapshot_rods(rods))
+            state_queue.put_nowait(build_snapshot(rods, manager))
         except queue.Full:
             pass
 
@@ -383,9 +436,28 @@ def run_simulation() -> None:
     worker.start()
 
     try:
-        current_state: List[RenderRod] = state_queue.get(timeout=5.0)
+        current_snapshot: SimulationSnapshot = state_queue.get(timeout=5.0)
     except queue.Empty:
-        current_state = []
+        current_snapshot = SimulationSnapshot(render_data=[], free_end_count=0, largest_cluster_percent=0.0)
+
+    plt.ion()
+    fig, (ax_free, ax_cluster) = plt.subplots(2, 1, figsize=(6, 6), sharex=True)
+    ax_free.set_ylabel("Free Ends")
+    ax_cluster.set_ylabel("Largest Cluster %")
+    ax_cluster.set_xlabel("Simulation Samples")
+    ax_free.grid(True, alpha=0.3)
+    ax_cluster.grid(True, alpha=0.3)
+    line_free, = ax_free.plot([], [], color="tab:blue", label="Free Ends")
+    line_cluster, = ax_cluster.plot([], [], color="tab:orange", label="Largest %")
+    ax_free.legend(loc="upper right")
+    ax_cluster.legend(loc="upper right")
+    fig.tight_layout()
+
+    history_indices: deque[int] = deque(maxlen=600)
+    history_free: deque[int] = deque(maxlen=600)
+    history_cluster: deque[float] = deque(maxlen=600)
+    sample_index = 0
+    last_chart_update = 0
 
     angle_x = math.radians(35)
     angle_y = math.radians(45)
@@ -407,7 +479,7 @@ def run_simulation() -> None:
         received_update = False
         try:
             while True:
-                current_state = state_queue.get_nowait()
+                current_snapshot = state_queue.get_nowait()
                 received_update = True
         except queue.Empty:
             pass
@@ -420,13 +492,35 @@ def run_simulation() -> None:
                     update_fps_display = 1000.0 / delta
             last_update_tick = now
 
+            history_indices.append(sample_index)
+            history_free.append(current_snapshot.free_end_count)
+            history_cluster.append(current_snapshot.largest_cluster_percent)
+            sample_index += 1
+
+            if now - last_chart_update >= 100:
+                x_data = list(history_indices)
+                line_free.set_data(x_data, list(history_free))
+                line_cluster.set_data(x_data, list(history_cluster))
+                if x_data:
+                    ax_free.set_xlim(x_data[0], x_data[-1] if x_data[-1] > x_data[0] else x_data[0] + 1)
+                ax_free.relim()
+                ax_free.autoscale_view()
+                ax_cluster.relim()
+                ax_cluster.autoscale_view()
+                fig.canvas.draw_idle()
+                fig.canvas.flush_events()
+                plt.pause(0.001)
+                last_chart_update = now
+
         draw_rods(
             screen,
-            current_state,
+            current_snapshot.render_data,
             angle_x,
             angle_y,
             overlay_text=(
-                f"Render FPS: {render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f}"
+                "Render FPS: "
+                f"{render_fps:5.1f} | Sim updates/s: {update_fps_display:5.1f} | "
+                f"Free ends: {current_snapshot.free_end_count:4d} | Largest cluster: {current_snapshot.largest_cluster_percent:5.1f}%"
             ),
             font=font,
         )
@@ -442,6 +536,9 @@ def run_simulation() -> None:
     worker.join(timeout=2.0)
     if worker.is_alive():
         worker.terminate()
+
+    plt.ioff()
+    plt.close(fig)
 
     pygame.quit()
 
