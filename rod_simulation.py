@@ -7,12 +7,13 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pygame
 from matplotlib.widgets import Button, TextBox
+from scipy import ndimage
 
 
 # Simulation constants
@@ -500,37 +501,6 @@ def sphere_offsets(radius: int) -> List[Tuple[int, int, int]]:
     return offsets
 
 
-def binary_dilation(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
-    result = np.zeros_like(grid, dtype=bool)
-    coords = np.argwhere(grid)
-    max_x, max_y, max_z = grid.shape
-    for x, y, z in coords:
-        for ox, oy, oz in offsets:
-            nx, ny, nz = x + ox, y + oy, z + oz
-            if 0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z:
-                result[nx, ny, nz] = True
-    return result
-
-
-def binary_erosion(grid: np.ndarray, offsets: List[Tuple[int, int, int]]) -> np.ndarray:
-    result = np.zeros_like(grid, dtype=bool)
-    max_x, max_y, max_z = grid.shape
-    coords = np.argwhere(grid)
-    for x, y, z in coords:
-        keep = True
-        for ox, oy, oz in offsets:
-            nx, ny, nz = x + ox, y + oy, z + oz
-            if not (0 <= nx < max_x and 0 <= ny < max_y and 0 <= nz < max_z):
-                keep = False
-                break
-            if not grid[nx, ny, nz]:
-                keep = False
-                break
-        if keep:
-            result[x, y, z] = True
-    return result
-
-
 def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarray:
     coords = np.argwhere(occupancy)
     if coords.size == 0:
@@ -566,13 +536,19 @@ def run_rolling_ball_simulation(
     render_data: List[RenderRod],
     radius: float,
     grid_resolution: int = 72,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> RollingBallResult:
+    def report(progress: float, message: str) -> None:
+        if progress_cb is not None:
+            progress_cb(max(0.0, min(1.0, progress)), message)
+
     grid_shape = (grid_resolution, grid_resolution, grid_resolution)
     occupancy = np.zeros(grid_shape, dtype=bool)
     voxel_size = CUBE_SIZE / grid_resolution
     half = CUBE_HALF
 
     if not render_data:
+        report(1.0, "Keine Rod-Daten vorhanden")
         return RollingBallResult(
             surface_points=np.empty((0, 3), dtype=float),
             filled_voxel_count=0,
@@ -586,7 +562,10 @@ def run_rolling_ball_simulation(
     thickness_radius = max(0, int(math.ceil((BASE_ROD_THICKNESS * 0.5) / max(voxel_size, 1e-6))))
     thickness_offsets = sphere_offsets(thickness_radius)
 
-    for point_a, point_b, _ in render_data:
+    report(0.0, "Voxelisiere Rods")
+    total_rods = len(render_data)
+    next_progress_update = 0.05
+    for index, (point_a, point_b, _) in enumerate(render_data):
         start = np.array(point_a, dtype=float)
         end = np.array(point_b, dtype=float)
         for t in np.linspace(0.0, 1.0, samples_per_rod):
@@ -597,17 +576,35 @@ def run_rolling_ball_simulation(
                 nx, ny, nz = ix + ox, iy + oy, iz + oz
                 if 0 <= nx < grid_resolution and 0 <= ny < grid_resolution and 0 <= nz < grid_resolution:
                     occupancy[nx, ny, nz] = True
+        if total_rods > 0:
+            progress = 0.6 * ((index + 1) / total_rods)
+            if progress >= next_progress_update:
+                report(progress, f"Voxelisiere Rods ({index + 1}/{total_rods})")
+                next_progress_update += 0.05
 
-    radius_vox = max(1, min(grid_resolution // 2, int(math.ceil(radius / max(voxel_size, 1e-6)))))
-    structuring = sphere_offsets(radius_vox)
+    report(0.62, "Berechne Distanzkarte der Freiräume")
 
-    dilated = binary_dilation(occupancy, structuring)
-    closed = binary_erosion(dilated, structuring)
+    radius_vox = max(radius / max(voxel_size, 1e-6), 0.0)
+
+    empty_distance = ndimage.distance_transform_edt(~occupancy)
+    report(0.75, "Weite befüllte Struktur aus")
+
+    dilated = occupancy | (empty_distance <= radius_vox)
+
+    report(0.85, "Berechne Distanzkarte des Volumens")
+
+    inside_distance = ndimage.distance_transform_edt(dilated)
+    erosion_threshold = max(radius_vox - 0.5, 0.0)
+    closed = dilated & (inside_distance > erosion_threshold)
+
+    report(0.92, "Extrahiere Oberfläche")
 
     filled_voxel_count = int(np.count_nonzero(closed))
     total_voxel_count = int(closed.size)
     fill_fraction = (filled_voxel_count / total_voxel_count) if total_voxel_count else 0.0
     surface_points = extract_surface_points(closed, voxel_size)
+
+    report(1.0, "Rolling-Ball abgeschlossen")
 
     return RollingBallResult(
         surface_points=surface_points,
@@ -1002,8 +999,18 @@ def run_headless_phase(
             update_status("Keine Snapshot-Daten verfügbar")
             return
         update_status("Rolling-Ball-Simulation läuft …")
+
+        def progress_callback(progress: float, message: str) -> None:
+            update_status(f"{message} – {progress * 100:.0f}%")
+            fig.canvas.draw_idle()
+            fig.canvas.flush_events()
+
         fig.canvas.draw()
-        result = run_rolling_ball_simulation(snapshot.render_data, ui_state.rolling_radius)
+        result = run_rolling_ball_simulation(
+            snapshot.render_data,
+            ui_state.rolling_radius,
+            progress_cb=progress_callback,
+        )
         ui_state.rolling_result = result
         filled_percent = result.fill_fraction * 100.0
         update_status(
