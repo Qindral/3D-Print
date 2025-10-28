@@ -19,6 +19,7 @@ TIME_STEP = 0.05
 TRANSLATION_SCALE = 2.5
 ROTATION_SCALE = 0.2
 CONNECTION_DISTANCE = 2.5
+MAX_GROUP_SIZE = 10
 BACKGROUND_COLOR = (15, 15, 25)
 ROD_COLOR = (180, 220, 255)
 CONNECTED_COLOR = (255, 150, 80)
@@ -132,6 +133,17 @@ class ConnectionManager:
         self.groups: Dict[int, ConnectionGroup] = {}
         self._next_id = 0
 
+    def group_size(self, group_id: int) -> int:
+        group = self.groups.get(group_id)
+        if group is None:
+            return 0
+        return len(group.members)
+
+    def is_full(self, group_id: Optional[int]) -> bool:
+        if group_id is None:
+            return False
+        return self.group_size(group_id) >= MAX_GROUP_SIZE
+
     def create_group(self, member_a: Tuple[int, str], member_b: Tuple[int, str]) -> int:
         group_id = self._next_id
         self._next_id += 1
@@ -141,6 +153,8 @@ class ConnectionManager:
     def add_member(self, group_id: int, member: Tuple[int, str]) -> None:
         group = self.groups.get(group_id)
         if group is None:
+            return
+        if len(group.members) >= MAX_GROUP_SIZE:
             return
         if member not in group.members:
             group.members.append(member)
@@ -153,6 +167,9 @@ class ConnectionManager:
             return
         source = self.groups.pop(source_id, None)
         if source is None:
+            return
+        if len(target.members) + len(source.members) > MAX_GROUP_SIZE:
+            self.groups[source_id] = source
             return
         for member in source.members:
             rod_idx, end = member
@@ -234,6 +251,8 @@ def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
     for idx_i in order:
         rod_i, end_i, pos_i, cell_i = endpoints[idx_i]
         group_i = rods[rod_i].connections.get(end_i)
+        if manager.is_full(group_i):
+            continue
 
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
@@ -254,6 +273,8 @@ def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
                             continue
 
                         group_j = rods[rod_j].connections.get(end_j)
+                        if manager.is_full(group_j):
+                            continue
                         if group_i is not None and group_j is not None and group_i == group_j:
                             continue
 
@@ -270,14 +291,21 @@ def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
                             rods[rod_j].connections[end_j] = group_id
                             break
                         if group_i is not None and group_j is None:
+                            if manager.is_full(group_i):
+                                continue
                             manager.add_member(group_i, (rod_j, end_j))
                             rods[rod_j].connections[end_j] = group_i
                             break
                         if group_i is None and group_j is not None:
+                            if manager.is_full(group_j):
+                                continue
                             manager.add_member(group_j, (rod_i, end_i))
                             rods[rod_i].connections[end_i] = group_j
                             break
                         if group_i is not None and group_j is not None and group_i != group_j:
+                            combined = manager.group_size(group_i) + manager.group_size(group_j)
+                            if combined > MAX_GROUP_SIZE:
+                                continue
                             target, source = (group_i, group_j)
                             if source < target:
                                 target, source = source, target
