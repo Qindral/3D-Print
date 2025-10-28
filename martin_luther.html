@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Martin Luther Social Scrolls</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg-gradient: linear-gradient(135deg, #f4f6ff 0%, #d6dffa 30%, #b9c7ff 60%, #fdf0ff 100%);
+      --card-bg: rgba(255, 255, 255, 0.75);
+      --card-border: rgba(77, 77, 127, 0.25);
+      --primary: #2f3a8f;
+      --accent: #f2b33d;
+      --text: #1b1c3f;
+      font-family: "Nunito", "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg-gradient);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      padding: 2.5rem 1.5rem;
+      box-sizing: border-box;
+    }
+
+    .app-shell {
+      width: min(1080px, 100%);
+      background: var(--card-bg);
+      border-radius: 28px;
+      border: 1px solid var(--card-border);
+      box-shadow: 0 24px 60px rgba(48, 56, 128, 0.2);
+      backdrop-filter: blur(20px);
+      display: grid;
+      grid-template-columns: minmax(240px, 320px) 1fr;
+      overflow: hidden;
+    }
+
+    .figure-panel {
+      padding: 2.5rem 2rem;
+      position: relative;
+      background: linear-gradient(160deg, rgba(34, 43, 110, 0.8), rgba(27, 32, 76, 0.6));
+      color: #f6f7ff;
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .figure-panel h1 {
+      font-size: 1.9rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-align: center;
+      margin: 0;
+    }
+
+    .luther-figure {
+      position: relative;
+      width: 180px;
+      height: 280px;
+    }
+
+    .luther-figure .robe {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      transform: translateX(-50%);
+      width: 160px;
+      height: 210px;
+      background: linear-gradient(180deg, #2b2b3f 0%, #12121d 100%);
+      border-radius: 120px 120px 40px 40px / 160px 160px 40px 40px;
+      box-shadow: 0 20px 35px rgba(5, 9, 33, 0.6);
+    }
+
+    .luther-figure .head {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 110px;
+      height: 120px;
+      background: #f4d0a4;
+      border-radius: 45% 55% 50% 50%;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .luther-figure .head::before {
+      content: "";
+      position: absolute;
+      inset: -18px -15px 60px;
+      background: linear-gradient(160deg, #2f2f42, #191927 70%);
+      border-radius: 60% 65% 35% 35%;
+    }
+
+    .luther-figure .face-details {
+      position: absolute;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 60px;
+      height: 28px;
+      border-radius: 30px;
+      background: rgba(0, 0, 0, 0.08);
+    }
+
+    .luther-figure .face-details::before,
+    .luther-figure .face-details::after {
+      content: "";
+      position: absolute;
+      top: 6px;
+      width: 12px;
+      height: 12px;
+      background: #1f1f2a;
+      border-radius: 50%;
+    }
+
+    .luther-figure .face-details::before {
+      left: 8px;
+    }
+
+    .luther-figure .face-details::after {
+      right: 8px;
+    }
+
+    .luther-figure .hand {
+      position: absolute;
+      width: 58px;
+      height: 58px;
+      background: #f4d0a4;
+      border-radius: 50%;
+      top: 140px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 12px rgba(0, 0, 0, 0.25);
+    }
+
+    .luther-figure .hand.phone {
+      left: -10px;
+    }
+
+    .luther-figure .hand.bible {
+      right: -10px;
+    }
+
+    .hand.phone::before {
+      content: "";
+      width: 40px;
+      height: 70px;
+      background: linear-gradient(180deg, #202036, #090912);
+      border-radius: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .hand.phone::after {
+      content: "";
+      position: absolute;
+      bottom: 12px;
+      width: 18px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.4);
+    }
+
+    .hand.bible::before {
+      content: "";
+      width: 42px;
+      height: 60px;
+      background: linear-gradient(180deg, #5f3017, #381b0f);
+      border-radius: 6px;
+      border: 2px solid #f8cd76;
+      box-shadow: inset 0 0 0 2px rgba(248, 205, 118, 0.35);
+    }
+
+    .hand.bible::after {
+      content: "✚";
+      font-size: 18px;
+      color: #f8cd76;
+      position: absolute;
+    }
+
+    .content-panel {
+      padding: 2.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.65));
+    }
+
+    .content-panel header h2 {
+      font-size: 2.4rem;
+      margin: 0;
+      color: var(--primary);
+    }
+
+    .content-panel header p {
+      margin: 0.5rem 0 0;
+      line-height: 1.6;
+      color: rgba(27, 28, 63, 0.75);
+      max-width: 50ch;
+    }
+
+    .interaction-area {
+      display: grid;
+      grid-template-columns: 1fr minmax(260px, 320px);
+      gap: 2rem;
+      align-items: start;
+    }
+
+    .input-card {
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 20px;
+      padding: 1.8rem;
+      box-shadow: 0 12px 30px rgba(43, 51, 120, 0.18);
+      border: 1px solid rgba(42, 55, 130, 0.15);
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .input-card label {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-size: 0.85rem;
+      color: rgba(32, 40, 102, 0.7);
+    }
+
+    .input-card textarea,
+    .input-card input {
+      background: rgba(244, 247, 255, 0.8);
+      border: 1px solid rgba(76, 98, 180, 0.2);
+      border-radius: 14px;
+      padding: 1rem;
+      font: inherit;
+      resize: vertical;
+      min-height: 120px;
+      transition: border 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .input-card textarea:focus,
+    .input-card input:focus {
+      outline: none;
+      border-color: rgba(47, 58, 143, 0.65);
+      box-shadow: 0 0 0 4px rgba(47, 58, 143, 0.15);
+    }
+
+    .button-row {
+      display: flex;
+      gap: 1rem;
+      justify-content: flex-end;
+    }
+
+    button {
+      border: none;
+      border-radius: 14px;
+      padding: 0.85rem 1.6rem;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      background: var(--primary);
+      color: #fff;
+      box-shadow: 0 14px 24px rgba(47, 58, 143, 0.32);
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 28px rgba(47, 58, 143, 0.4);
+    }
+
+    button.secondary {
+      background: rgba(47, 58, 143, 0.12);
+      color: var(--primary);
+      box-shadow: none;
+    }
+
+    .phone-preview {
+      position: relative;
+      width: 100%;
+      max-width: 320px;
+      justify-self: end;
+    }
+
+    .phone-body {
+      background: radial-gradient(circle at top, rgba(255, 255, 255, 0.8), rgba(216, 219, 255, 0.9));
+      border-radius: 32px;
+      border: 1px solid rgba(28, 32, 68, 0.15);
+      padding: 1.6rem 1.2rem;
+      box-shadow: 0 24px 50px rgba(32, 39, 94, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .phone-notch {
+      align-self: center;
+      width: 36%;
+      height: 14px;
+      background: rgba(15, 19, 38, 0.5);
+      border-radius: 0 0 12px 12px;
+    }
+
+    .phone-screen {
+      background: rgba(10, 13, 38, 0.92);
+      border-radius: 20px;
+      padding: 1.4rem;
+      color: #f6f8ff;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+      overflow-y: auto;
+    }
+
+    .post {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 1rem 1.2rem;
+      line-height: 1.6;
+      font-size: 0.98rem;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    }
+
+    .post header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.6rem;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(246, 248, 255, 0.6);
+    }
+
+    .post strong {
+      color: #fce28f;
+    }
+
+    .post .timestamp {
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.45);
+    }
+
+    .hint {
+      font-size: 0.9rem;
+      color: rgba(27, 28, 63, 0.55);
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .chip {
+      padding: 0.45rem 0.8rem;
+      border-radius: 999px;
+      background: rgba(47, 58, 143, 0.15);
+      color: var(--primary);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    .chip:hover {
+      background: rgba(47, 58, 143, 0.28);
+    }
+
+    @media (max-width: 960px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .figure-panel {
+        flex-direction: row;
+        justify-content: space-between;
+        padding: 2rem;
+      }
+
+      .interaction-area {
+        grid-template-columns: 1fr;
+      }
+
+      .phone-preview {
+        justify-self: stretch;
+        max-width: none;
+      }
+    }
+
+    @media (max-width: 640px) {
+      body {
+        padding: 1.5rem 1rem;
+      }
+
+      .figure-panel {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .content-panel {
+        padding: 2rem 1.5rem;
+      }
+
+      .luther-figure {
+        transform: scale(0.85);
+      }
+
+      .input-card textarea {
+        min-height: 110px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="figure-panel">
+      <h1>Doctor Luther<br>Social Chronicles</h1>
+      <div class="luther-figure" aria-hidden="true">
+        <div class="robe"></div>
+        <div class="head"></div>
+        <div class="face-details"></div>
+        <div class="hand phone"></div>
+        <div class="hand bible"></div>
+      </div>
+      <p class="hint">Frage Martinus oder gib ein Wort ein, und er wird dir in altdeutscher Manier zurückschreiben.</p>
+    </aside>
+
+    <main class="content-panel">
+      <header>
+        <h2>Was möchtet Ihr wissen?</h2>
+        <p>Tippe eine Frage oder ein Schlagwort ein. Luther recherchiert in seinem Gedächtnis, verweist auf seine Taten und antwortet im Ton seiner Zeit.</p>
+      </header>
+
+      <section class="interaction-area">
+        <article class="input-card">
+          <label for="prompt">Eingabe</label>
+          <textarea id="prompt" placeholder="z.B. Was hielt Luther vom Ablass?" autocomplete="off"></textarea>
+          <div class="chips" id="chips"></div>
+          <div class="button-row">
+            <button type="button" class="secondary" id="reset">Zurücksetzen</button>
+            <button type="button" id="send">Luther posten lassen</button>
+          </div>
+        </article>
+
+        <aside class="phone-preview" aria-live="polite">
+          <div class="phone-body">
+            <div class="phone-notch"></div>
+            <div class="phone-screen" id="feed">
+              <div class="post">
+                <header>
+                  <span>Luthergram</span>
+                  <span class="timestamp">1522 &bull; Wittenberg</span>
+                </header>
+                <p>
+                  O fröhliche Seele, heiße willkommen in dem elektronischen Hofe. Gib dein Begehr ein, und Martinus setzt Feder an, auf daß die Timeline erfüllt werde.
+                </p>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const hints = [
+      "Wer war Katharina von Bora?",
+      "Was ist der Reichstag zu Worms?",
+      "Erkläre die 95 Thesen",
+      "Wie übersetzte Luther die Bibel?",
+      "Was bedeutet sola fide?"
+    ];
+
+    const knowledgeBase = [
+      {
+        keywords: ["thesen", "ablass", "95"],
+        fact: "Er gedenkt der fünfunfunfzig und neunzig Thesen, darinnen er den Ablasshandel scharf tadelte und der Christenheit zu rechter Buße mahnte." 
+      },
+      {
+        keywords: ["worm", "reichstag", "hier stehe ich", "reichstag"],
+        fact: "Er erinnert sich des Reichstags zu Worms anno domini 1521, da er sprach: \"Hier steh ich, ich kann nicht anders, Gott helf mir, Amen.\""
+      },
+      {
+        keywords: ["bib", "übersetz", "deutsch"],
+        fact: "Er verweist auf sein Werk in der Wartburg, da er das Neue Testament in das teutsche Muttersprach gekleidet hat, auf daß ein jeglicher Hörer Gottes Wort vernähme." 
+      },
+      {
+        keywords: ["katharina", "bora", "famil"],
+        fact: "Er gedenkt seiner Hausfrau Katharina von Bora, der klugen Matrone, mit der er einen gar lebendigen Haushalt führte." 
+      },
+      {
+        keywords: ["musik", "ein feste burg", "lied"],
+        fact: "Er stimmt an sein geistlich Lied \"Ein feste Burg ist unser Gott\", das den Glauben wider alle Anfechtungen stärket." 
+      },
+      {
+        keywords: ["bildung", "schule", "universität", "wittenberg"],
+        fact: "Er lobpreiset die Schule und die Universität zu Wittenberg, darinnen er Theologiam lehrte und Studenten die Schrift auslegte." 
+      },
+      {
+        keywords: ["sola", "fide", "gratia"],
+        fact: "Er predigt von sola fide und sola gratia, daß der Mensch allein durch Glauben und Gottes Gnad gerechtfertigt werde." 
+      }
+    ];
+
+    const archaicOpeners = [
+      "O ihr Lieben," ,
+      "Höret, ihr frommen Herzen,",
+      "Gedenket wohl,",
+      "Ihr Kindlein des Lichts,",
+      "Wohlan,"
+    ];
+
+    const closers = [
+      "So behüt euch der Herr wider alles Gezeter der Welt.",
+      "Darauf sprech ich Amen und empfehle euch der Gnade Gottes.",
+      "Drum steht vestiglich im Glauben und fürchtet euch nicht.",
+      "Dies hab ich getippt auf daß ihr's teilt mit jedermann.",
+      "Also schreibt euch Martinus aus Wittenberg." 
+    ];
+
+    const feed = document.getElementById('feed');
+    const promptField = document.getElementById('prompt');
+    const chips = document.getElementById('chips');
+
+    const makeTimestamp = () => {
+      const now = new Date();
+      return now.toLocaleString('de-DE', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: 'short'
+      });
+    };
+
+    const pick = array => array[Math.floor(Math.random() * array.length)];
+
+    const findFact = (input) => {
+      const normalized = input.toLowerCase();
+      for (const entry of knowledgeBase) {
+        if (entry.keywords.some(keyword => normalized.includes(keyword))) {
+          return entry.fact;
+        }
+      }
+      return "Er kramt in seinen Schriften, doch findet kein sonderlich Kapitel hierzu, mahnt aber zu stetem Forschen in Gottes Wort.";
+    };
+
+    const craftPost = (query) => {
+      const opener = pick(archaicOpeners);
+      const fact = findFact(query);
+      const closer = pick(closers);
+      return `${opener} ${fact} ${closer}`;
+    };
+
+    const addPost = (content, query) => {
+      const post = document.createElement('article');
+      post.className = 'post';
+      post.innerHTML = `
+        <header>
+          <span><strong>Martinus</strong> postet</span>
+          <span class="timestamp">${makeTimestamp()}</span>
+        </header>
+        <p><em>Anfrage:</em> ${query || '—'}</p>
+        <p>${content}</p>
+      `;
+      feed.prepend(post);
+    };
+
+    document.getElementById('send').addEventListener('click', () => {
+      const query = promptField.value.trim();
+      if (!query) {
+        promptField.focus();
+        return;
+      }
+      const postContent = craftPost(query);
+      addPost(postContent, query);
+      promptField.value = '';
+    });
+
+    document.getElementById('reset').addEventListener('click', () => {
+      promptField.value = '';
+      feed.innerHTML = `
+        <div class="post">
+          <header>
+            <span>Luthergram</span>
+            <span class="timestamp">${makeTimestamp()} &bull; Wittenberg</span>
+          </header>
+          <p>O fröhliche Seele, heiße willkommen in dem elektronischen Hofe. Gib dein Begehr ein, und Martinus setzt Feder an, auf daß die Timeline erfüllt werde.</p>
+        </div>
+      `;
+    });
+
+    const renderChips = () => {
+      hints.forEach(text => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'chip';
+        chip.textContent = text;
+        chip.addEventListener('click', () => {
+          promptField.value = text;
+          promptField.focus();
+        });
+        chips.appendChild(chip);
+      });
+    };
+
+    renderChips();
+  </script>
+</body>
+</html>
