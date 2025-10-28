@@ -535,7 +535,7 @@ def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarr
 def run_rolling_ball_simulation(
     render_data: List[RenderRod],
     threshold: float,
-    grid_resolution: int = 72,
+    grid_resolution: int = 7200,
     progress_cb: Optional[Callable[[float, str], None]] = None,
 ) -> RollingBallResult:
     def report(progress: float, message: str) -> None:
