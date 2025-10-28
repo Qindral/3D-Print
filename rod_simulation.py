@@ -20,6 +20,7 @@ CONNECTION_DISTANCE = 2.5
 BACKGROUND_COLOR = (15, 15, 25)
 ROD_COLOR = (180, 220, 255)
 CONNECTED_COLOR = (255, 150, 80)
+TEXT_COLOR = (240, 240, 240)
 
 
 def random_unit_vector() -> np.ndarray:
@@ -221,7 +222,14 @@ def snapshot_rods(rods: Iterable[Rod]) -> List[RenderRod]:
     return render_data
 
 
-def draw_rods(screen: pygame.Surface, render_data: List[RenderRod], angle_x: float, angle_y: float) -> None:
+def draw_rods(
+    screen: pygame.Surface,
+    render_data: List[RenderRod],
+    angle_x: float,
+    angle_y: float,
+    overlay_text: str | None = None,
+    font: pygame.font.Font | None = None,
+) -> None:
     screen.fill(BACKGROUND_COLOR)
     scale = screen.get_width() / (CUBE_SIZE * 0.8)
     for point_a_3d, point_b_3d, connected in render_data:
@@ -229,6 +237,9 @@ def draw_rods(screen: pygame.Surface, render_data: List[RenderRod], angle_x: flo
         point_a = project_point(np.array(point_a_3d), angle_x, angle_y, scale, screen.get_size())
         point_b = project_point(np.array(point_b_3d), angle_x, angle_y, scale, screen.get_size())
         pygame.draw.line(screen, color, point_a, point_b, 2)
+    if overlay_text and font:
+        text_surface = font.render(overlay_text, True, TEXT_COLOR)
+        screen.blit(text_surface, (10, 10))
     pygame.display.flip()
 
 
@@ -253,6 +264,7 @@ def run_simulation() -> None:
     screen = pygame.display.set_mode((960, 720))
     pygame.display.set_caption("Rod Brownian Motion Simulation")
     clock = pygame.time.Clock()
+    font = pygame.font.SysFont("consolas", 20)
 
     ctx = mp.get_context("spawn")
     state_queue: mp.Queue = ctx.Queue(maxsize=2)
@@ -267,6 +279,7 @@ def run_simulation() -> None:
 
     angle_x = math.radians(35)
     angle_y = math.radians(45)
+    last_caption_update = 0
 
     running = True
     while running:
@@ -282,8 +295,21 @@ def run_simulation() -> None:
         except queue.Empty:
             pass
 
-        draw_rods(screen, current_state, angle_x, angle_y)
+        draw_rods(
+            screen,
+            current_state,
+            angle_x,
+            angle_y,
+            overlay_text=f"FPS: {clock.get_fps():5.1f}",
+            font=font,
+        )
         clock.tick(60)
+        now = pygame.time.get_ticks()
+        if now - last_caption_update >= 250:
+            pygame.display.set_caption(
+                f"Rod Brownian Motion Simulation - FPS: {clock.get_fps():5.1f}"
+            )
+            last_caption_update = now
 
     stop_event.set()
     worker.join(timeout=2.0)
