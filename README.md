@@ -11,9 +11,14 @@ python rod_simulation.py
 
 ### Controls
 
-* **Headless analytics + UI** – While the Matplotlib window is open the simulation runs headlessly as fast as possible. Use the buttons to abort, trigger the rolling-ball pass (enter a ball radius in simulation units), or open the generated organic shape in a 3D viewer. Close the chart window to move on to the real-time rod renderer.
+* **Headless analytics + UI** – While the Matplotlib window is open the simulation runs headlessly as fast as possible. Use the buttons to abort, trigger the rolling-ball pass (enter a ball radius in simulation units), export the organic volume as an OBJ file, or open the generated organic shape in a 3D viewer. Close the chart window to move on to the real-time rod renderer.
 * **Rolling-ball viewer** – After running the rolling-ball pass, click the "3D-Ansicht anzeigen" button to inspect the smoothed voxel cloud. Use the same controls as the rod viewer (mouse drag to orbit, `WASD` + `Space`/`Ctrl` to move, `Shift` to sprint, `Esc` to close).
 * **Main rod viewer** – When the Matplotlib window closes (either manually or after launching the rolling-ball viewer) the Pygame window opens and renders the live rod simulation. Camera controls match the rolling-ball view.
+
+### Daten speichern und weiterverarbeiten
+
+* **Automatische Zustandsdatei** – Sobald du die Simulation verlässt oder im Headless-Fenster auf „Simulation abbrechen" klickst, speichert das Programm die aktuellen Rod-Positionen, Orientierungen und Verbindungen nach `rod_state.json`. Beim nächsten Start wird dieser Zustand automatisch geladen, sodass du ohne erneuten Headless-Lauf weiterarbeiten kannst. Lösche die Datei, wenn du wieder mit einem zufälligen Startzustand beginnen möchtest.
+* **Rolling-Ball-Export** – Nach einem Rolling-Ball-Lauf kannst du über den Button „Rolling-Ball exportieren" eine OBJ-Datei (`rolling_ball_surface.obj`) schreiben lassen. Die Datei enthält die Rolling-Ball-Oberfläche als Punktwolke und dient als Ausgangsbasis für weitere Modellierungsschritte.
 
 ### Running the simulation online
 
