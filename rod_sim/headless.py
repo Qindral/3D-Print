@@ -16,7 +16,7 @@ from .models import HeadlessUIState, SimulationSnapshot
 
 
 def _compute_cluster_ticks(min_value: int, max_value: int) -> list[float]:
-    """Return between 5 and 50 sensible tick marks for the histogram axis."""
+    """Return between 5 and 15 sensible tick marks for the histogram axis."""
 
     if min_value >= max_value:
         base = max(1, min_value)
@@ -24,7 +24,7 @@ def _compute_cluster_ticks(min_value: int, max_value: int) -> list[float]:
         return [float(start + offset) for offset in range(5)]
 
     span = max_value - min_value
-    target_ticks = min(50, max(5, span + 1))
+    target_ticks = min(15, max(5, span + 1))
     step = max(1, math.ceil(span / (target_ticks - 1)))
     ticks = list(range(min_value, max_value + 1, step))
     if ticks[-1] != max_value:
@@ -38,8 +38,8 @@ def _compute_cluster_ticks(min_value: int, max_value: int) -> list[float]:
         while len(ticks) < 5:
             ticks.append(ticks[-1] + step)
 
-    if len(ticks) > 50:
-        stride = math.ceil(len(ticks) / 50)
+    if len(ticks) > 15:
+        stride = math.ceil(len(ticks) / 15)
         ticks = ticks[::stride]
         if ticks[-1] != max_value:
             ticks.append(max_value)
@@ -254,8 +254,8 @@ def run_headless_phase(
     ax_free.legend(loc="upper right")
     ax_cluster.legend(loc="upper right")
     ax_hist.set_xlabel("Clustergröße")
-    ax_hist.set_ylabel("Anteil der Cluster")
-    ax_hist.set_title("Verteilung der Clustergrößen")
+    ax_hist.set_ylabel("Rods je Cluster-Bin")
+    ax_hist.set_title("Verteilung der Clustergrößen (Rods)")
     ax_hist.grid(True, alpha=0.3)
     fig.tight_layout(rect=(0.02, 0.28, 0.98, 0.98))
 
@@ -316,8 +316,8 @@ def run_headless_phase(
             ax_hist.cla()
             sizes = current_snapshot.cluster_sizes
             ax_hist.set_xlabel("Clustergröße")
-            ax_hist.set_ylabel("Anteil der Cluster")
-            ax_hist.set_title("Verteilung der Clustergrößen")
+            ax_hist.set_ylabel("Rods je Cluster-Bin")
+            ax_hist.set_title("Verteilung der Clustergrößen (Rods)")
             ax_hist.grid(True, alpha=0.3)
             if sizes:
                 min_bin = min(sizes)
@@ -325,12 +325,10 @@ def run_headless_phase(
                 if min_bin == max_bin:
                     bin_edges = np.linspace(min_bin - 0.5, max_bin + 0.5, num=2)
                 else:
-                    bins = min(30, max(2, len(sizes)))
+                    span = max_bin - min_bin + 1
+                    bins = min(50, max(2, min(len(sizes), span)))
                     bin_edges = np.linspace(min_bin - 0.5, max_bin + 0.5, num=bins + 1)
-                hist, edges = np.histogram(sizes, bins=bin_edges)
-                total = hist.sum()
-                if total > 0:
-                    hist = hist.astype(float) / float(total)
+                hist, edges = np.histogram(sizes, bins=bin_edges, weights=sizes)
                 centers = (edges[:-1] + edges[1:]) * 0.5
                 widths = edges[1:] - edges[:-1]
                 widths = np.where(widths <= 0.0, 1.0, widths)
