@@ -34,6 +34,28 @@ def random_rotation() -> Tuple[np.ndarray, float]:
     return axis, angle
 
 
+def translation_displacements(count: int, scale: float) -> np.ndarray:
+    """Return `count` displacement vectors scaled by `scale`."""
+
+    if count <= 0:
+        return np.empty((0, 3), dtype=float)
+    return np.random.normal(scale=scale, size=(count, 3))
+
+
+def random_rotation_batch(count: int, time_scale: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Return arrays of rotation axes and scaled angles."""
+
+    if count <= 0:
+        return np.empty((0, 3), dtype=float), np.empty((0,), dtype=float)
+
+    phi = np.random.uniform(0.0, 2.0 * math.pi, size=count)
+    costheta = np.random.uniform(-1.0, 1.0, size=count)
+    sintheta = np.sqrt(np.maximum(0.0, 1.0 - costheta * costheta))
+    axes = np.stack((np.cos(phi) * sintheta, np.sin(phi) * sintheta, costheta), axis=1)
+    angles = np.random.normal(scale=ROTATION_SCALE, size=count) * time_scale
+    return axes, angles
+
+
 def clamp_to_cube(center: np.ndarray) -> np.ndarray:
     """Clamp a point so it stays inside the simulation cube."""
 

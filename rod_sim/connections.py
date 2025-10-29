@@ -8,7 +8,13 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .constants import CONNECTION_DISTANCE, CUBE_SIZE, MAX_GROUP_SIZE
-from .models import ConnectionGroup, RenderRod, Rod, SimulationSnapshot, SimulationStatePayload
+from .models import (
+    ConnectionGroup,
+    RenderGeometry,
+    Rod,
+    SimulationSnapshot,
+    SimulationStatePayload,
+)
 
 
 class ConnectionManager:
@@ -68,9 +74,16 @@ class ConnectionManager:
             if not group.members:
                 continue
             accumulator = np.zeros(3)
+            count = 0
             for rod_idx, end in group.members:
-                accumulator += rods[rod_idx].endpoints()[end]
-            anchor_map[group_id] = accumulator / len(group.members)
+                rod = rods[rod_idx]
+                if end == "A":
+                    accumulator += rod.center + rod.half_vector
+                else:
+                    accumulator += rod.center - rod.half_vector
+                count += 1
+            if count:
+                anchor_map[group_id] = accumulator / count
         return anchor_map
 
     def next_group_id(self) -> int:
@@ -88,8 +101,9 @@ def attempt_connections(rods: List[Rod], manager: ConnectionManager) -> None:
     grid: Dict[Tuple[int, int, int], List[int]] = {}
 
     for idx, rod in enumerate(rods):
-        rod_endpoints = rod.endpoints()
-        for end, pos in rod_endpoints.items():
+        offset = rod.half_vector
+        center = rod.center
+        for end, pos in (("A", center + offset), ("B", center - offset)):
             pos_tuple = (float(pos[0]), float(pos[1]), float(pos[2]))
             cell = (
                 int((pos_tuple[0] + half) * inv_cell),
@@ -199,43 +213,54 @@ def enforce_connections(rods: List[Rod], manager: ConnectionManager) -> None:
 def compute_metrics(rods: List[Rod], manager: ConnectionManager) -> Tuple[int, float, List[int]]:
     """Compute free-end counts, largest component percentage, and component sizes."""
 
-    free_ends = 0
-    adjacency: List[set[int]] = [set() for _ in rods]
+    rod_count = len(rods)
+    if rod_count == 0:
+        return 0, 0.0, []
 
+    free_ends = 0
     for rod in rods:
         if "A" not in rod.connections:
             free_ends += 1
         if "B" not in rod.connections:
             free_ends += 1
 
+    parent = list(range(rod_count))
+    sizes = [1] * rod_count
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        root_a = find(a)
+        root_b = find(b)
+        if root_a == root_b:
+            return
+        if sizes[root_a] < sizes[root_b]:
+            root_a, root_b = root_b, root_a
+        parent[root_b] = root_a
+        sizes[root_a] += sizes[root_b]
+
     for group in manager.groups.values():
         if not group.members:
             continue
-        rod_indices = {member[0] for member in group.members}
-        if len(rod_indices) <= 1:
+        members = list({member[0] for member in group.members})
+        if len(members) <= 1:
             continue
-        for rod_idx in rod_indices:
-            adjacency[rod_idx].update(rod_indices - {rod_idx})
+        base = members[0]
+        for member_idx in members[1:]:
+            union(base, member_idx)
 
-    visited = set()
-    largest_component = 0
-    component_sizes: List[int] = []
-    for idx in range(len(rods)):
-        if idx in visited:
-            continue
-        stack = [idx]
-        component_size = 0
-        while stack:
-            node = stack.pop()
-            if node in visited:
-                continue
-            visited.add(node)
-            component_size += 1
-            stack.extend(neigh for neigh in adjacency[node] if neigh not in visited)
-        component_sizes.append(component_size)
-        largest_component = max(largest_component, component_size)
+    component_counter: Dict[int, int] = {}
+    for idx in range(rod_count):
+        root = find(idx)
+        component_counter[root] = component_counter.get(root, 0) + 1
 
-    percent = (largest_component / len(rods) * 100.0) if rods else 0.0
+    component_sizes = list(component_counter.values())
+    largest_component = max(component_sizes) if component_sizes else 0
+    percent = (largest_component / rod_count * 100.0) if rod_count else 0.0
     return free_ends, percent, component_sizes
 
 
@@ -244,16 +269,23 @@ def build_snapshot(
 ) -> SimulationSnapshot:
     """Create a snapshot payload for rendering and persistence."""
 
-    render_data: List[RenderRod] = []
-    for rod in rods:
-        endpoints = rod.endpoints()
-        render_data.append(
-            (
-                tuple(float(v) for v in endpoints["A"]),
-                tuple(float(v) for v in endpoints["B"]),
-                bool(rod.connections),
-            )
-        )
+    rod_count = len(rods)
+    if rod_count:
+        centers = np.empty((rod_count, 3), dtype=np.float32)
+        offsets = np.empty((rod_count, 3), dtype=np.float32)
+        connected_flags = np.empty((rod_count,), dtype=bool)
+        for idx, rod in enumerate(rods):
+            centers[idx] = rod.center
+            offsets[idx] = rod.half_vector
+            connected_flags[idx] = bool(rod.connections)
+        points_a = centers + offsets
+        points_b = centers - offsets
+    else:
+        points_a = np.empty((0, 3), dtype=np.float32)
+        points_b = np.empty((0, 3), dtype=np.float32)
+        connected_flags = np.empty((0,), dtype=bool)
+
+    render_data = RenderGeometry(points_a=points_a, points_b=points_b, connected=connected_flags)
     free_ends, largest_percent, component_sizes = compute_metrics(rods, manager)
     state_payload: Optional[SimulationStatePayload] = None
     if include_state:

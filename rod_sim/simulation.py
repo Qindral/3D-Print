@@ -8,7 +8,7 @@ import queue
 import pygame
 
 from .headless import run_headless_phase
-from .models import SimulationSnapshot
+from .models import RenderGeometry, SimulationSnapshot
 from .persistence import save_simulation_state, wait_for_state_snapshot
 from .startup import prompt_start_choice
 from .viewers import run_interactive_viewer, run_rolling_ball_viewer
@@ -20,7 +20,7 @@ def _get_initial_snapshot(state_queue: mp.Queue) -> SimulationSnapshot:
         return state_queue.get(timeout=5.0)
     except queue.Empty:
         return SimulationSnapshot(
-            render_data=[],
+            render_data=RenderGeometry(),
             free_end_count=0,
             largest_cluster_percent=0.0,
             cluster_sizes=[],

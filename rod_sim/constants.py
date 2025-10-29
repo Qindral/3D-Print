@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import os
 
 import numpy as np
 
 # Simulation constants
 CUBE_SIZE = 200.0
 ROD_LENGTH = 20.0
-NUM_RODS = 500
+NUM_RODS = int(os.environ.get("ROD_SIM_NUM_RODS", "500"))
 TIME_STEP = 0.05
 TRANSLATION_SCALE = 2.5
 ROTATION_SCALE = 0.2

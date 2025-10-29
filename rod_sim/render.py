@@ -20,7 +20,7 @@ from .constants import (
     ROD_COLOR,
     TEXT_COLOR,
 )
-from .models import RenderRod
+from .models import RenderGeometry
 
 
 class CameraState:
@@ -142,7 +142,7 @@ def collect_cube_segments(
 
 def draw_scene(
     screen: pygame.Surface,
-    render_data: List[RenderRod],
+    render_data: RenderGeometry,
     camera: CameraState,
     overlay_text: Optional[str] = None,
     font: Optional[pygame.font.Font] = None,
@@ -158,13 +158,16 @@ def draw_scene(
         pygame.draw.line(screen, color, start, end, 1)
 
     rod_segments: List[Tuple[Tuple[int, int], Tuple[int, int], float, Tuple[int, int, int], int]] = []
-    for point_a_3d, point_b_3d, connected in render_data:
-        proj_a = project_point(np.array(point_a_3d), view_matrix, screen_size, camera.position)
-        proj_b = project_point(np.array(point_b_3d), view_matrix, screen_size, camera.position)
+    points_a = render_data.points_a
+    points_b = render_data.points_b
+    connected_flags = render_data.connected
+    for idx in range(len(render_data)):
+        proj_a = project_point(points_a[idx], view_matrix, screen_size, camera.position)
+        proj_b = project_point(points_b[idx], view_matrix, screen_size, camera.position)
         if proj_a[0] is None or proj_b[0] is None:
             continue
         avg_depth = (proj_a[1] + proj_b[1]) / 2.0
-        base_color = CONNECTED_COLOR if connected else ROD_COLOR
+        base_color = CONNECTED_COLOR if connected_flags[idx] else ROD_COLOR
         color = shade_color(base_color, avg_depth)
         thickness = thickness_for_depth(avg_depth)
         rod_segments.append((proj_a[0], proj_b[0], avg_depth, color, thickness))

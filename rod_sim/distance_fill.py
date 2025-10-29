@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 from scipy import ndimage
@@ -16,7 +16,7 @@ from .constants import (
     ROD_LENGTH,
     ROLLING_EXPORT_PATH,
 )
-from .models import RenderRod, RollingBallResult
+from .models import RenderGeometry, RollingBallResult
 
 
 def sphere_offsets(radius: int) -> List[Tuple[int, int, int]]:
@@ -66,7 +66,7 @@ def extract_surface_points(occupancy: np.ndarray, voxel_size: float) -> np.ndarr
 
 
 def run_distance_fill(
-    render_data: List[RenderRod],
+    render_data: RenderGeometry,
     threshold: float,
     grid_resolution: int = 256,
     progress_cb: Optional[Callable[[float, str], None]] = None,
@@ -80,7 +80,7 @@ def run_distance_fill(
     voxel_size = CUBE_SIZE / grid_resolution
     half = CUBE_HALF
 
-    if not render_data:
+    if render_data.is_empty():
         report(1.0, "Keine Rod-Daten vorhanden")
         return RollingBallResult(
             surface_points=np.empty((0, 3), dtype=float),
@@ -101,9 +101,11 @@ def run_distance_fill(
     report(0.0, f"Voxelisiere Rods ({grid_resolution}³)")
     total_rods = len(render_data)
     next_progress_update = 0.05
-    for index, (point_a, point_b, _) in enumerate(render_data):
-        start = np.array(point_a, dtype=float)
-        end = np.array(point_b, dtype=float)
+    points_a = render_data.points_a
+    points_b = render_data.points_b
+    for index in range(total_rods):
+        start = points_a[index]
+        end = points_b[index]
         for t in np.linspace(0.0, 1.0, samples_per_rod):
             position = start * (1.0 - t) + end * t
             idx = np.floor((position + half) / voxel_size).astype(int)

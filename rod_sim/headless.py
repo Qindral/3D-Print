@@ -5,11 +5,11 @@ from __future__ import annotations
 import math
 import queue
 import time
-from collections import Counter
 from typing import Tuple
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, TextBox
+import numpy as np
 
 from .distance_fill import export_distance_fill, run_distance_fill
 from .models import HeadlessUIState, SimulationSnapshot
@@ -134,7 +134,7 @@ def _install_controls(
         if snapshot is None:
             update_status("Keine Snapshot-Daten verfügbar")
             return False
-        if not snapshot.render_data:
+        if snapshot.render_data.is_empty():
             update_status("Snapshot enthält keine Rod-Geometrie")
             return False
         update_status(
@@ -215,6 +215,9 @@ def _install_controls(
     pause_ax = fig.add_axes([0.35, 0.08, 0.25, 0.06])
     pause_button = Button(pause_ax, "Simulation pausieren", color="#4c78c9", hovercolor="#6c98e0")
 
+    if pause_event.is_set():
+        pause_button.label.set_text("Simulation fortsetzen")
+
     def handle_pause_click(_: object) -> None:
         if pause_event.is_set():
             pause_event.clear()
@@ -251,7 +254,7 @@ def run_headless_phase(
     ax_free.legend(loc="upper right")
     ax_cluster.legend(loc="upper right")
     ax_hist.set_xlabel("Clustergröße")
-    ax_hist.set_ylabel("Anzahl")
+    ax_hist.set_ylabel("Anteil der Cluster")
     ax_hist.set_title("Verteilung der Clustergrößen")
     ax_hist.grid(True, alpha=0.3)
     fig.tight_layout(rect=(0.02, 0.28, 0.98, 0.98))
@@ -286,6 +289,10 @@ def run_headless_phase(
         except queue.Empty:
             pass
 
+        if pause_event.is_set():
+            plt.pause(0.02)
+            continue
+
         if updated:
             ui_state.history_indices.append(sample_index)
             rod_count = max(1, len(current_snapshot.render_data))
@@ -308,17 +315,30 @@ def run_headless_phase(
             ax_cluster.autoscale_view()
             ax_hist.cla()
             sizes = current_snapshot.cluster_sizes
+            ax_hist.set_xlabel("Clustergröße")
+            ax_hist.set_ylabel("Anteil der Cluster")
+            ax_hist.set_title("Verteilung der Clustergrößen")
+            ax_hist.grid(True, alpha=0.3)
             if sizes:
-                counts = Counter(sizes)
-                bins = sorted(counts.keys())
-                heights = [counts[b] for b in bins]
-                ax_hist.bar(bins, heights, color="tab:green", alpha=0.7)
-                if bins:
-                    min_bin = bins[0]
-                    max_bin = bins[-1]
-                    ticks = _compute_cluster_ticks(min_bin, max_bin)
-                    ax_hist.set_xlim(min(min_bin, ticks[0]) - 0.5, max(max_bin, ticks[-1]) + 0.5)
+                min_bin = min(sizes)
+                max_bin = max(sizes)
+                if min_bin == max_bin:
+                    bin_edges = np.linspace(min_bin - 0.5, max_bin + 0.5, num=2)
+                else:
+                    bins = min(30, max(2, len(sizes)))
+                    bin_edges = np.linspace(min_bin - 0.5, max_bin + 0.5, num=bins + 1)
+                hist, edges = np.histogram(sizes, bins=bin_edges)
+                total = hist.sum()
+                if total > 0:
+                    hist = hist.astype(float) / float(total)
+                centers = (edges[:-1] + edges[1:]) * 0.5
+                widths = edges[1:] - edges[:-1]
+                widths = np.where(widths <= 0.0, 1.0, widths)
+                ax_hist.bar(centers, hist, width=widths, color="tab:green", alpha=0.7, align="center")
+                ticks = _compute_cluster_ticks(int(math.floor(min_bin)), int(math.ceil(max_bin)))
+                if ticks:
                     ax_hist.set_xticks(ticks)
+                    ax_hist.set_xlim(ticks[0] - 0.5, ticks[-1] + 0.5)
             else:
                 ax_hist.text(
                     0.5,
@@ -328,10 +348,6 @@ def run_headless_phase(
                     va="center",
                     transform=ax_hist.transAxes,
                 )
-            ax_hist.set_xlabel("Clustergröße")
-            ax_hist.set_ylabel("Anzahl")
-            ax_hist.set_title("Verteilung der Clustergrößen")
-            ax_hist.grid(True, alpha=0.3)
             fig.canvas.draw_idle()
             fig.canvas.flush_events()
             last_chart_update = now

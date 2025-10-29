@@ -10,7 +10,12 @@ import numpy as np
 from .constants import CUBE_SIZE, NUM_RODS, TIME_STEP, TRANSLATION_SCALE
 from .connections import ConnectionManager, attempt_connections, enforce_connections
 from .models import Rod
-from .utils import clamp_to_cube, random_displacement, random_rotation, random_unit_vector
+from .utils import (
+    clamp_to_cube,
+    random_rotation_batch,
+    random_unit_vector,
+    translation_displacements,
+)
 
 
 def create_rods(num_rods: int = NUM_RODS) -> List[Rod]:
@@ -35,11 +40,16 @@ def create_rods(num_rods: int = NUM_RODS) -> List[Rod]:
 def update_rods(rods: List[Rod], manager: ConnectionManager) -> None:
     """Advance the physics simulation for all rods."""
 
-    for rod in rods:
-        delta = random_displacement(TRANSLATION_SCALE) * TIME_STEP
-        rod.apply_translation(delta)
-        axis, angle = random_rotation()
-        rod.apply_rotation(axis, angle * TIME_STEP)
+    rod_count = len(rods)
+    if rod_count == 0:
+        return
+
+    translations = translation_displacements(rod_count, TRANSLATION_SCALE * TIME_STEP)
+    axes, angles = random_rotation_batch(rod_count, TIME_STEP)
+
+    for idx, rod in enumerate(rods):
+        rod.apply_translation(translations[idx])
+        rod.apply_rotation(axes[idx], angles[idx])
         rod.center = clamp_to_cube(rod.center)
 
     enforce_connections(rods, manager)
