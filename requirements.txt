@@ -1,2 +1,8 @@
 numpy
 pygame
+matplotlib
+# if ExecutionPolicy blocks scripts (run once in this terminal)
+#Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force
+
+# activate
+#. .venv\Scripts\Activate.ps1

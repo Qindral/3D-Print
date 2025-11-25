@@ -25,7 +25,7 @@ N_Z_SUPPORT_RODS = 30
 
 SCALE_TO_MM = True
 SCALE_FACTOR = 10.0 if SCALE_TO_MM else 1.0
-
+SAVE_PATH = r"C:\Users\Jonas\Downloads\3D_Print"
 # Für die schnelle Distanzberechnung:
 MAX_POINTS_DISTANCE = 30  # max Punkte pro Chain in der Distanz-Approximation
 
@@ -484,10 +484,10 @@ if __name__ == "__main__":
     )
     
     # 5) Drei STL-Files schreiben
-    write_ascii_stl("initial_network_chains.stl", tris_network, name="initial_network_chains")
-    write_ascii_stl("z_support_chains.stl",      tris_zsup,    name="z_support_chains")
-    write_ascii_stl("bridge_chains.stl",        tris_bridge,   name="bridge_chains")
-    write_ascii_stl("all_chains_final.stl",     tris_all,      name="all_chains_final")
+    write_ascii_stl(f"{SAVE_PATH}/initial_network_chains.stl", tris_network, name="initial_network_chains")
+    write_ascii_stl(f"{SAVE_PATH}/z_support_chains.stl",      tris_zsup,    name="z_support_chains")
+    write_ascii_stl(f"{SAVE_PATH}/bridge_chains.stl",        tris_bridge,   name="bridge_chains")
+    write_ascii_stl(f"{SAVE_PATH}/all_chains_final.stl",     tris_all,      name="all_chains_final")
     print("Fertig. Geschrieben wurden:")
     print("  initial_network_chains.stl")
     print("  z_support_chains.stl")

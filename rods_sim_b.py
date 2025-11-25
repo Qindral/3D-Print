@@ -66,9 +66,9 @@ def gyroid_slice(L=100.0,
 if __name__ == "__main__":
     # Beispiel: Gyroid-Schnitt in der Mitte, moderater threshold
     gyroid_slice(
-        L=100.0,      # „µm“
+        L=200.0,      # „µm“
         n=800,        # Auflösung (größer = glatter)
-        z_slice=25.0, # Schnittebene
-        k=2*np.pi/40.0,  # Periodenlänge ~ 40 µm
-        threshold=0.1    # >0 -> Gel-Phase wird schlanker
+        z_slice=20.0, # Schnittebene
+        k=3*np.pi/40.0,  # Periodenlänge ~ 40 µm
+        threshold=1    # >0 -> Gel-Phase wird schlanker
     )
